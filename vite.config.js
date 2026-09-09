@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://albaseetcarrental.runasp.net',
+        target: 'http://localhost:5014',
         changeOrigin: true,
         secure: false,
       }

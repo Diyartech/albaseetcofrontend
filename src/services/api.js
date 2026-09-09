@@ -1,7 +1,7 @@
 // Centralized Backend API Client for Al-Baseet Rent a Car Web API (.NET 10 / SQL Server)
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
-//const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5014/api'
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`
   const config = {
@@ -16,7 +16,7 @@ async function request(endpoint, options = {}) {
     const response = await fetch(url, config)
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.message || `HTTP error ${response.status}`)
+      throw new Error(errorData.message || `HTTP Error ${response.status}`)
     }
     const contentType = response.headers.get('content-type')
     if (contentType && contentType.includes('application/json')) {
@@ -24,7 +24,7 @@ async function request(endpoint, options = {}) {
     }
     return null
   } catch (error) {
-    console.warn(`[Backend API Fallback]: ${error.message} - Using local cache.`)
+    console.error(`[Backend API Request Error]: ${url} - ${error.message}`)
     throw error
   }
 }
@@ -155,5 +155,62 @@ export const apiService = {
     if (filters.endDate) params.append('endDate', filters.endDate)
     if (filters.search) params.append('search', filters.search)
     return await request(`/bookings/admin/all?${params.toString()}`)
+  },
+
+  // Lookups CMS API
+  async getEngineTypes() {
+    return await request('/lookups/engine-types')
+  },
+  async addEngineType(name) {
+    return await request('/lookups/engine-types', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    })
+  },
+  async getCategories() {
+    return await request('/lookups/categories')
+  },
+  async addCategory(id, name) {
+    return await request('/lookups/categories', {
+      method: 'POST',
+      body: JSON.stringify({ id, name }),
+    })
+  },
+  async getFuelTypes() {
+    return await request('/lookups/fuel-types')
+  },
+  async addFuelType(name) {
+    return await request('/lookups/fuel-types', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    })
+  },
+
+  // Insurance Policies & Add-ons API
+  async getInsurancePolicies() {
+    return await request('/insurancepolicies')
+  },
+  async getAddOns() {
+    return await request('/addons')
+  },
+
+  // Handover, Dispatch & Maintenance API
+  async dispatchBooking(refNumber, data) {
+    return await request(`/bookings/${refNumber}/dispatch`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async returnBooking(refNumber, data) {
+    return await request(`/bookings/${refNumber}/return`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async getMaintenanceRecords(carId = null) {
+    const url = carId ? `/bookings/admin/maintenance?carId=${carId}` : '/bookings/admin/maintenance'
+    return await request(url)
   }
 }

@@ -308,6 +308,22 @@ function handlePrintInvoice() {
             </div>
           </div>
 
+          <!-- Dispatched Vehicle Handover Report Card for Customer -->
+          <div v-if="searchedBooking.plateNumber || searchedBooking.dispatchedAt" class="detail-block-card span-full" style="background: linear-gradient(135deg, rgba(243, 112, 33, 0.06) 0%, rgba(0, 77, 64, 0.06) 100%); border: 1.5px solid var(--gold);">
+            <h4 class="block-title text-primary">
+              <Key :size="18" class="text-orange" />
+              <span>بيانات المركبة المُسلّمة إليك 🚗🔑</span>
+            </h4>
+            <div class="info-list grid grid-2">
+              <p><strong>رقم اللوحة المسلمة:</strong> <span class="badge badge-gold font-mono" style="font-size: 0.95rem;">{{ searchedBooking.plateNumber }}</span></p>
+              <p><strong>قراءة العداد عند الاستلام:</strong> <strong class="text-dark">{{ searchedBooking.pickupOdometer }} كم</strong></p>
+              <p><strong>مستوى الوقود عند الاستلام:</strong> <strong class="text-success">⛽ {{ searchedBooking.pickupFuelLevel || '100%' }}</strong></p>
+              <p><strong>تاريخ وتوقيت التسليم:</strong> <span>{{ searchedBooking.dispatchedAt }}</span></p>
+              <p v-if="searchedBooking.vinNumber"><strong>رقم الشاسي (VIN):</strong> <span class="font-mono text-xs">{{ searchedBooking.vinNumber }}</span></p>
+              <p v-if="searchedBooking.dispatchNotes" class="col-span-2"><strong>ملاحظات حالة التسليم:</strong> <span class="text-muted">{{ searchedBooking.dispatchNotes }}</span></p>
+            </div>
+          </div>
+
           <!-- Column 3: ZATCA QR Verification Simulation -->
           <div class="detail-block-card qr-block">
             <h4 class="block-title">

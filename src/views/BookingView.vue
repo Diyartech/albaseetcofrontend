@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useBookingStore } from '../stores/bookingStore'
 import { useCarStore } from '../stores/carStore'
 import { useBranchStore } from '../stores/branchStore'
@@ -16,8 +16,19 @@ const bookingStore = useBookingStore()
 const carStore = useCarStore()
 const branchStore = useBranchStore()
 const router = useRouter()
+const route = useRoute()
 
-const showEditSearchModal = ref(false)
+// Open SearchWidget edit options drawer by default on entering booking page from Fleet
+const showEditSearchModal = ref(true)
+
+onMounted(() => {
+  if (route.query.edit === 'true' || route.query.fromFleet === 'true' || true) {
+    showEditSearchModal.value = true
+    if (bookingStore.selectedCar && bookingStore.currentStep === 1) {
+      bookingStore.currentStep = 2
+    }
+  }
+})
 
 // Payment Form Mock Data
 const cardForm = ref({
@@ -218,12 +229,12 @@ const currentPickupBranchName = computed(() => {
           <div class="section-box card">
             <h3 class="section-title">
               <Shield :size="20" class="text-primary" />
-              <span>خيارات التغطية التأمينية لمشوارك</span>
+              <span>خيارات التغطية التأمينية لمشوارك 🛡️</span>
             </h3>
 
             <div class="insurance-options-list">
               <label 
-                v-for="opt in bookingStore.insuranceOptions" 
+                v-for="opt in bookingStore.activeInsuranceOptions" 
                 :key="opt.id" 
                 class="insurance-card"
                 :class="{ active: bookingStore.selectedInsurance === opt.id }"
@@ -236,50 +247,48 @@ const currentPickupBranchName = computed(() => {
                 />
                 <div class="insurance-content">
                   <div class="ins-header">
-                    <h4>{{ opt.name }}</h4>
+                    <div class="d-flex align-items-center gap-2">
+                      <h4>{{ opt.name }}</h4>
+                      <span v-if="opt.badge" class="badge badge-gold text-xs">{{ opt.badge }}</span>
+                    </div>
                     <strong class="ins-price">
-                      {{ opt.pricePerDay === 0 ? 'مجاناً' : `${opt.pricePerDay} ر.س / يوم` }}
+                      {{ opt.pricePerDay === 0 ? 'مجاناً' : `+${opt.pricePerDay} ر.س / يوم` }}
                     </strong>
                   </div>
                   <p class="ins-desc">{{ opt.desc }}</p>
+                  <div v-if="opt.deductibleAmount !== undefined" class="text-xs text-muted mt-1">
+                    مبلغ التحمل عند الحادث: <strong>{{ opt.deductibleAmount === 0 ? '0 ر.س (إعفاء تام)' : `${opt.deductibleAmount} ر.س` }}</strong>
+                  </div>
                 </div>
               </label>
             </div>
           </div>
 
-          <!-- Add-ons Selection (الإضافات والخدمات) -->
+          <!-- Add-ons Selection (الإضافات والخدمات المتاحة) -->
           <div class="section-box card">
             <h3 class="section-title">
               <Sparkles :size="20" class="text-gold" />
-              <span>الإضافات والخدمات المتاحة</span>
+              <span>الإضافات والخدمات المتاحة 🧰</span>
             </h3>
 
             <div class="add-ons-list">
-              <label class="addon-item card" :class="{ active: bookingStore.addOns.openKm.enabled }">
-                <input type="checkbox" v-model="bookingStore.addOns.openKm.enabled" />
+              <label 
+                v-for="item in bookingStore.activeAddOnsList" 
+                :key="item.id" 
+                class="addon-item card" 
+                :class="{ active: item.selected }"
+              >
+                <input 
+                  type="checkbox" 
+                  v-model="item.selected" 
+                />
                 <div class="addon-info">
-                  <h4>كيلومتر مفتوح (كيلومترات لا محدوة)</h4>
-                  <p>قيادة بحرية تامة دون أي تقيد أو احتساب رسوم إضافية على المسافات</p>
+                  <h4>{{ item.name }}</h4>
+                  <p>{{ item.desc }}</p>
                 </div>
-                <strong class="addon-price">+50 ر.س / يوم</strong>
-              </label>
-
-              <label class="addon-item card" :class="{ active: bookingStore.addOns.babySeat.enabled }">
-                <input type="checkbox" v-model="bookingStore.addOns.babySeat.enabled" />
-                <div class="addon-info">
-                  <h4>مقعد أطفال آمن</h4>
-                  <p>مقعد مريح ومطابق لأعلى معايير الأمان والسلامة للأطفال</p>
-                </div>
-                <strong class="addon-price">+15 ر.س / يوم</strong>
-              </label>
-
-              <label class="addon-item card" :class="{ active: bookingStore.addOns.extraDriver.enabled }">
-                <input type="checkbox" v-model="bookingStore.addOns.extraDriver.enabled" />
-                <div class="addon-info">
-                  <h4>إضافة سائق إضافي معتمد</h4>
-                  <p>اعتماد سائق إضافي لقيادة المركبة بطريقة رسمية ومغطاة بالتأمين</p>
-                </div>
-                <strong class="addon-price">+35 ر.س / يوم</strong>
+                <strong class="addon-price">
+                  {{ item.pricingMode === 'oneTime' ? `+${item.oneTimePrice} ر.س (رسوم ثابتة)` : `+${item.pricePerDay} ر.س / يوم` }}
+                </strong>
               </label>
             </div>
           </div>

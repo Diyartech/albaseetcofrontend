@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { apiService } from '../services/api'
+import { useBranchStore } from './branchStore'
 
 export const useBookingStore = defineStore('booking', () => {
   // Rental configuration
@@ -16,27 +17,59 @@ export const useBookingStore = defineStore('booking', () => {
   const dropoffCity = ref('jeddah')
   const dropoffBranchId = ref(1)
 
-  // Dates & Times (Defaults: tomorrow 11:30 to day after 11:30)
-  const today = new Date()
-  const defaultPickupDate = new Date(today.setDate(today.getDate() + 1)).toISOString().split('T')[0]
-  const defaultDropoffDate = new Date(today.setDate(today.getDate() + 2)).toISOString().split('T')[0]
+  watch(pickupCity, (newCity) => {
+    const branchStore = useBranchStore()
+    const cityBranches = branchStore.branches.filter(b => b.cityId === newCity)
+    if (cityBranches.length > 0) {
+      pickupBranchId.value = cityBranches[0].id
+    }
+  })
+
+  // Dates & Times (Default initial booking: 1 Day duration)
+  const now = new Date()
+  const pickupDt = new Date(now)
+  pickupDt.setDate(pickupDt.getDate() + 1) // Tomorrow
+  
+  const dropoffDt = new Date(pickupDt)
+  dropoffDt.setDate(dropoffDt.getDate() + 1) // Exactly 1 day after pickup
+
+  const defaultPickupDate = pickupDt.toISOString().split('T')[0]
+  const defaultDropoffDate = dropoffDt.toISOString().split('T')[0]
   
   const pickupDate = ref(defaultPickupDate)
   const pickupTime = ref('11:30')
   const dropoffDate = ref(defaultDropoffDate)
   const dropoffTime = ref('11:30')
 
-  // Calculated duration (in days)
+  // Calculated duration (in days) with 3-hour grace period rule (فترة سماح 3 ساعات)
   const rentalDays = computed(() => {
     if (!pickupDate.value || !dropoffDate.value) return 1
-    const p = new Date(pickupDate.value)
-    const d = new Date(dropoffDate.value)
-    const diffTime = d.getTime() - p.getTime()
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-    
-    if (rentalMode.value === 'weekly' && diffDays < 7) return 7
-    if (rentalMode.value === 'monthly' && diffDays < 30) return 30
-    return diffDays > 0 ? diffDays : 1
+
+    const pickupStr = `${pickupDate.value}T${pickupTime.value || '11:30'}:00`
+    const dropoffStr = `${dropoffDate.value}T${dropoffTime.value || '11:30'}:00`
+
+    const p = new Date(pickupStr)
+    const d = new Date(dropoffStr)
+
+    const diffMs = d.getTime() - p.getTime()
+    if (isNaN(diffMs) || diffMs <= 0) return 1
+
+    const totalHours = diffMs / (1000 * 60 * 60)
+    const full24hDays = Math.floor(totalHours / 24)
+    const extraHours = totalHours % 24
+
+    let days = full24hDays
+    // Grace period rule: Allow up to 3 extra hours for free without flipping to a new day
+    if (extraHours > 3) {
+      days += 1
+    }
+
+    if (days < 1) days = 1
+
+    if (rentalMode.value === 'weekly' && days < 7) return 7
+    if (rentalMode.value === 'monthly' && days < 30) return 30
+
+    return days
   })
 
   // Selected Car
@@ -45,20 +78,239 @@ export const useBookingStore = defineStore('booking', () => {
   // Wizard Step (1: Choose Car, 2: Extras, 3: Details, 4: Payment)
   const currentStep = ref(1)
 
-  // Protection & Insurance
-  const insuranceOptions = ref([
-    { id: 'basic', name: 'تغطية مجانية أساسية من الولاء', pricePerDay: 0, desc: 'تغطية ضد الحوادث مع نسبة تحمل استقطاع نظامي' },
-    { id: 'full', name: 'أمان المطارات والتغطية الشاملة', pricePerDay: 35, desc: 'تغطية شاملة للمركبة والإعفاء التام من نسبة التحمل' },
-    { id: 'shield', name: 'درع البسيط التام (شامل + زجاج وإطارات)', pricePerDay: 60, desc: 'حماية كاملة 100% تشمل الأضرار الناتجة عن الحصى والزجاج' }
-  ])
+  // Protection & Insurance Options (Dynamic CMS Managed)
+  const initialInsuranceOptions = [
+    {
+      id: 'basic',
+      code: 'basic',
+      name: 'تغطية مجانية أساسية من الولاء',
+      pricePerDay: 0,
+      deductibleAmount: 3000,
+      badge: 'مجاناً',
+      desc: 'تغطية ضد الحوادث مع نسبة تحمل استقطاع نظامي 3000 ر.س عند خطأ العميل',
+      features: ['تغطية ضد الحوادث', 'استقطاع نسبة التحمل النظامية (3000 ر.س)'],
+      isActive: true
+    },
+    {
+      id: 'full',
+      code: 'full',
+      name: 'أمان المطارات والتغطية الشاملة',
+      pricePerDay: 35,
+      deductibleAmount: 0,
+      badge: 'الأكثر طلباً',
+      desc: 'تغطية شاملة للمركبة والإعفاء التام من نسبة التحمل 0 ر.س',
+      features: ['تغطية شاملة للمركبة', 'إعفاء تام من نسبة التحمل (0 ر.س)', 'تغطية السائق والركاب'],
+      isActive: true
+    },
+    {
+      id: 'shield',
+      code: 'shield',
+      name: 'درع البسيط التام (شامل + زجاج وإطارات)',
+      pricePerDay: 60,
+      deductibleAmount: 0,
+      badge: 'حماية VIP 100%',
+      desc: 'حماية كاملة 100% تشمل الأضرار الناتجة عن الحصى والزجاج والإطارات وسحب المركبة',
+      features: ['حماية كاملة 100%', 'تغطية الزجاج الأمامي والإطارات', 'خدمة سحب المركبة 24/7', 'سيارة بديلة فورية'],
+      isActive: true
+    }
+  ]
+
+  const insuranceOptions = ref(
+    JSON.parse(localStorage.getItem('admin_insurance_options')) || initialInsuranceOptions
+  )
+
+  const activeInsuranceOptions = computed(() => {
+    return insuranceOptions.value.filter(i => i.isActive !== false)
+  })
+
   const selectedInsurance = ref('basic')
 
-  // Add-ons
-  const addOns = ref({
-    openKm: { enabled: false, pricePerDay: 50, label: 'كيلومتر مفتوح (كيلومترات لا محدوة)' },
-    babySeat: { enabled: false, pricePerDay: 15, label: 'مقعد أطفال آمن' },
-    extraDriver: { enabled: false, pricePerDay: 35, label: 'إضافة سائق إضافي معتمد' },
-    airportDelivery: { enabled: false, pricePerDay: 0, oneTimePrice: 40, label: 'خدمة التوصيل والاستلام السريع' }
+  // Insurance Options Admin CRUD
+  function addInsuranceOption(optionData) {
+    const newId = 'ins_' + Date.now()
+    insuranceOptions.value.push({
+      id: newId,
+      code: optionData.code || newId,
+      name: optionData.name,
+      pricePerDay: Number(optionData.pricePerDay) || 0,
+      deductibleAmount: Number(optionData.deductibleAmount) || 0,
+      badge: optionData.badge || 'تغطية مميزة',
+      desc: optionData.desc || '',
+      features: Array.isArray(optionData.features) ? optionData.features : (typeof optionData.features === 'string' ? optionData.features.split(',').map(s => s.trim()).filter(Boolean) : []),
+      isActive: optionData.isActive !== undefined ? optionData.isActive : true
+    })
+  }
+
+  function updateInsuranceOption(id, optionData) {
+    const idx = insuranceOptions.value.findIndex(i => i.id === id)
+    if (idx !== -1) {
+      const featArr = Array.isArray(optionData.features) 
+        ? optionData.features 
+        : (typeof optionData.features === 'string' ? optionData.features.split(',').map(s => s.trim()).filter(Boolean) : insuranceOptions.value[idx].features)
+
+      insuranceOptions.value[idx] = {
+        ...insuranceOptions.value[idx],
+        ...optionData,
+        pricePerDay: Number(optionData.pricePerDay) || 0,
+        deductibleAmount: Number(optionData.deductibleAmount) || 0,
+        features: featArr
+      }
+    }
+  }
+
+  function deleteInsuranceOption(id) {
+    insuranceOptions.value = insuranceOptions.value.filter(i => i.id !== id)
+    if (selectedInsurance.value === id) {
+      selectedInsurance.value = activeInsuranceOptions.value[0]?.id || 'basic'
+    }
+  }
+
+  function toggleInsuranceActive(id) {
+    const item = insuranceOptions.value.find(i => i.id === id)
+    if (item) item.isActive = !item.isActive
+  }
+
+  // Add-ons & Extra Services (Dynamic CMS Managed)
+  const initialAddOnsList = [
+    {
+      id: 'openKm',
+      name: 'كيلومتر مفتوح (كيلومترات لا محدوة)',
+      pricePerDay: 50,
+      oneTimePrice: 0,
+      pricingMode: 'daily',
+      desc: 'قيادة بحرية تامة دون أي تقيّـد أو احتساب رسوم إضافية على المسافات',
+      icon: 'Gauge',
+      selected: false,
+      isActive: true
+    },
+    {
+      id: 'babySeat',
+      name: 'مقعد أطفال آمن معتمد',
+      pricePerDay: 15,
+      oneTimePrice: 0,
+      pricingMode: 'daily',
+      desc: 'مقعد مريح ومطابق لأعلى معايير الأمان والسلامة للأطفال',
+      icon: 'Baby',
+      selected: false,
+      isActive: true
+    },
+    {
+      id: 'extraDriver',
+      name: 'إضافة سائق إضافي معتمد',
+      pricePerDay: 35,
+      oneTimePrice: 0,
+      pricingMode: 'daily',
+      desc: 'اعتماد سائق إضافي لقيادة المركبة بطريقة رسمية ومغطاة بالتأمين',
+      icon: 'UserPlus',
+      selected: false,
+      isActive: true
+    },
+    {
+      id: 'airportDelivery',
+      name: 'خدمة التوصيل والاستلام السريع للموقع / المطار',
+      pricePerDay: 0,
+      oneTimePrice: 40,
+      pricingMode: 'oneTime',
+      desc: 'توصيل المركبة واستلامها من موقعك المفضل فوراً (رسوم ثابتة)',
+      icon: 'Truck',
+      selected: false,
+      isActive: true
+    }
+  ]
+
+  const addOnsList = ref(
+    JSON.parse(localStorage.getItem('admin_addons_list')) || initialAddOnsList
+  )
+
+  const activeAddOnsList = computed(() => {
+    return addOnsList.value.filter(a => a.isActive !== false)
+  })
+
+  // Add-ons Admin CRUD
+  function addAddOn(addonData) {
+    const newId = 'addon_' + Date.now()
+    addOnsList.value.push({
+      id: newId,
+      name: addonData.name,
+      pricePerDay: Number(addonData.pricePerDay) || 0,
+      oneTimePrice: Number(addonData.oneTimePrice) || 0,
+      pricingMode: addonData.pricingMode || 'daily',
+      desc: addonData.desc || '',
+      icon: addonData.icon || 'Sparkles',
+      selected: false,
+      isActive: addonData.isActive !== undefined ? addonData.isActive : true
+    })
+  }
+
+  function updateAddOn(id, addonData) {
+    const idx = addOnsList.value.findIndex(a => a.id === id)
+    if (idx !== -1) {
+      addOnsList.value[idx] = {
+        ...addOnsList.value[idx],
+        ...addonData,
+        pricePerDay: Number(addonData.pricePerDay) || 0,
+        oneTimePrice: Number(addonData.oneTimePrice) || 0
+      }
+    }
+  }
+
+  function deleteAddOn(id) {
+    addOnsList.value = addOnsList.value.filter(a => a.id !== id)
+  }
+
+  function toggleAddOnActive(id) {
+    const item = addOnsList.value.find(a => a.id === id)
+    if (item) item.isActive = !item.isActive
+  }
+
+  function toggleAddOnSelection(id) {
+    const item = addOnsList.value.find(a => a.id === id)
+    if (item) item.selected = !item.selected
+  }
+
+  async function fetchInsuranceAndAddonsFromBackend() {
+    try {
+      const [policies, addons] = await Promise.all([
+        apiService.getInsurancePolicies().catch(() => null),
+        apiService.getAddOns().catch(() => null)
+      ])
+
+      if (policies && Array.isArray(policies) && policies.length > 0) {
+        insuranceOptions.value = policies.map(p => ({
+          id: p.code || ('ins_' + p.id),
+          code: p.code,
+          name: p.nameAr,
+          pricePerDay: p.pricePerDay || 0,
+          deductibleAmount: p.deductibleAmount || 0,
+          badge: p.pricePerDay === 0 ? 'مجاناً' : (p.pricePerDay > 50 ? 'حماية VIP 100%' : 'الأكثر طلباً'),
+          desc: p.description || '',
+          features: p.pricePerDay === 0 
+            ? ['تغطية ضد الحوادث', `استقطاع نسبة التحمل النظامية (${p.deductibleAmount} ر.س)`]
+            : ['تغطية شاملة للمركبة', 'إعفاء تام من نسبة التحمل (0 ر.س)', 'تغطية السائق والركاب'],
+          isActive: p.isActive !== false
+        }))
+      }
+
+      if (addons && Array.isArray(addons) && addons.length > 0) {
+        addOnsList.value = addons.map(a => ({
+          id: a.id,
+          name: a.name,
+          pricePerDay: a.pricePerDay || 0,
+          oneTimePrice: a.oneTimePrice || 0,
+          pricingMode: a.type === 'one_time' ? 'oneTime' : 'daily',
+          desc: a.desc || '',
+          icon: 'Sparkles',
+          selected: false,
+          isActive: a.isActive !== false
+        }))
+      }
+    } catch (err) {
+      console.error('Error fetching insurance/addons from Backend API:', err)
+    }
+  }
+
+  onMounted(() => {
+    fetchInsuranceAndAddonsFromBackend()
   })
 
   // Promo Code
@@ -194,10 +446,15 @@ export const useBookingStore = defineStore('booking', () => {
 
   const addOnsTotal = computed(() => {
     let sum = 0
-    if (addOns.value.openKm.enabled) sum += addOns.value.openKm.pricePerDay * rentalDays.value
-    if (addOns.value.babySeat.enabled) sum += addOns.value.babySeat.pricePerDay * rentalDays.value
-    if (addOns.value.extraDriver.enabled) sum += addOns.value.extraDriver.pricePerDay * rentalDays.value
-    if (addOns.value.airportDelivery.enabled) sum += addOns.value.airportDelivery.oneTimePrice
+    addOnsList.value.forEach(item => {
+      if (item.selected && item.isActive !== false) {
+        if (item.pricingMode === 'oneTime') {
+          sum += (Number(item.oneTimePrice) || 0)
+        } else {
+          sum += (Number(item.pricePerDay) || 0) * rentalDays.value
+        }
+      }
+    })
     return sum
   })
 
@@ -370,6 +627,13 @@ export const useBookingStore = defineStore('booking', () => {
     bookingErrorMessage.value = ''
     dateValidationError.value = ''
     activeConfirmedBooking.value = null
+
+    const p = new Date()
+    p.setDate(p.getDate() + 1)
+    const d = new Date(p)
+    d.setDate(d.getDate() + 1)
+    pickupDate.value = p.toISOString().split('T')[0]
+    dropoffDate.value = d.toISOString().split('T')[0]
   }
 
   return {
@@ -389,8 +653,19 @@ export const useBookingStore = defineStore('booking', () => {
     selectedCar,
     currentStep,
     insuranceOptions,
+    activeInsuranceOptions,
     selectedInsurance,
-    addOns,
+    addInsuranceOption,
+    updateInsuranceOption,
+    deleteInsuranceOption,
+    toggleInsuranceActive,
+    addOnsList,
+    activeAddOnsList,
+    addAddOn,
+    updateAddOn,
+    deleteAddOn,
+    toggleAddOnActive,
+    toggleAddOnSelection,
     promoCode,
     appliedDiscount,
     promoSuccessMessage,

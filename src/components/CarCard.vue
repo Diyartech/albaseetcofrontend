@@ -29,20 +29,28 @@ const calculatedTotal = computed(() => {
   return (rate * bookingStore.rentalDays).toFixed(2)
 })
 
+const availableForSelectedBranch = computed(() => {
+  if (!bookingStore.pickupBranchId || bookingStore.pickupBranchId === 'all') {
+    return props.car.availableCount !== undefined ? props.car.availableCount : (props.car.availableStock !== undefined ? props.car.availableStock : 1)
+  }
+  const bStock = props.car.branchStock || (typeof props.car.branchStockJson === 'string' ? JSON.parse(props.car.branchStockJson || '{}') : {})
+  const key = String(bookingStore.pickupBranchId)
+  if (bStock[key] !== undefined) {
+    return parseInt(bStock[key]) || 0
+  }
+  return props.car.availableCount || 0
+})
+
 const isOutOfStock = computed(() => {
-  const stock = props.car.availableCount !== undefined ? props.car.availableCount : (props.car.availableStock !== undefined ? props.car.availableStock : 1)
-  return stock <= 0 || props.car.isActive === false
+  return availableForSelectedBranch.value <= 0 || props.car.isActive === false
 })
 
 function handleBookClick() {
   if (isOutOfStock.value) return
   bookingStore.selectedCar = props.car
   emit('select', props.car)
-  if (bookingStore.currentStep === 1) {
-    bookingStore.currentStep = 2
-  } else {
-    router.push('/booking')
-  }
+  bookingStore.currentStep = 2
+  router.push({ path: '/booking', query: { edit: 'true', fromFleet: 'true' } })
 }
 </script>
 
@@ -52,10 +60,10 @@ function handleBookClick() {
     <div class="card-header-area">
       <span class="badge badge-gold badge-top">{{ car.badge || car.category }}</span>
       <span v-if="isOutOfStock" class="badge badge-red badge-stock">
-        محجوزة بالكامل 🔴
+        غير متوفرة بهذا الفرع 🔴
       </span>
-      <span v-else-if="car.availableCount < 10" class="badge badge-orange badge-stock">
-        متوفر {{ car.availableCount }} سيارات فقط
+      <span v-else-if="availableForSelectedBranch < 10" class="badge badge-orange badge-stock">
+        متوفر {{ availableForSelectedBranch }} سيارات بفرع الحجز
       </span>
       <div class="car-img-wrapper">
         <img :src="car.image" :alt="car.name" class="car-img" />

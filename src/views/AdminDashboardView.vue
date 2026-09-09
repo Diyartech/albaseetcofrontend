@@ -4,18 +4,20 @@ import { useRouter } from 'vue-router'
 import { useAdminStore } from '../stores/adminStore'
 import { useCarStore } from '../stores/carStore'
 import { useBranchStore } from '../stores/branchStore'
+import { useBookingStore } from '../stores/bookingStore'
 import { apiService } from '../services/api'
 import { 
   LayoutDashboard, Image, Car, MapPin, Settings, 
   Plus, Trash2, Edit, CheckCircle, Eye, Power, Save,
   TrendingUp, Users, DollarSign, ExternalLink, X, LogOut,
   CalendarCheck, Calendar, Filter, Search, RefreshCw, FileText, CheckCircle2, XCircle,
-  Lock, AlertCircle
+  Lock, AlertCircle, Shield, Sparkles, Gauge, Baby, UserPlus, Truck, Wrench, Key, CheckSquare
 } from 'lucide-vue-next'
 
 const adminStore = useAdminStore()
 const carStore = useCarStore()
 const branchStore = useBranchStore()
+const bookingStore = useBookingStore()
 const router = useRouter()
 
 // Inline Login State
@@ -166,6 +168,15 @@ const filteredAdminCars = computed(() => {
   return list
 })
 
+function getBranchDisplayName(branchId) {
+  if (!branchId || branchId === 'all') return '📍 جميع الفروع'
+  const branch = branchStore.branches.find(b => String(b.id) === String(branchId) || b.cityId === branchId)
+  if (branch) {
+    return `📍 ${branch.name} (${branch.cityName || branch.cityId})`
+  }
+  return '📍 فرع محدد'
+}
+
 const isCarModalOpen = ref(false)
 const editingCarId = ref(null)
 const carForm = ref({
@@ -173,6 +184,9 @@ const carForm = ref({
   orSimilar: 'أو ما شابه ذلك',
   year: 2026,
   categoryId: 'economy',
+  engineType: '4 سلندر 1.6L',
+  fuelType: 'بنزين 91',
+  branchId: 'all',
   dailyRate: 140,
   weeklyDiscount: 10,
   monthlyDiscount: 25,
@@ -189,11 +203,22 @@ const carForm = ref({
 
 function openAddCarModal() {
   editingCarId.value = null
+  const defaultEngine = carStore.engineTypes[0]?.id ? String(carStore.engineTypes[0].id) : '1'
+  const defaultFuel = carStore.fuelTypes[0]?.id ? String(carStore.fuelTypes[0].id) : '1'
+
+  const initialBranchStock = {}
+  branchStore.branches.forEach(b => {
+    initialBranchStock[String(b.id)] = 2
+  })
+
   carForm.value = {
     name: '',
     orSimilar: 'أو ما شابه ذلك',
     year: 2026,
-    categoryId: 'economy',
+    categoryId: carStore.categories.filter(c => c.id !== 'all')[0]?.id || 'economy',
+    engineType: defaultEngine,
+    fuelType: defaultFuel,
+    branchId: 'all',
     dailyRate: 140,
     weeklyDiscount: 10,
     monthlyDiscount: 25,
@@ -201,7 +226,8 @@ function openAddCarModal() {
     doors: 4,
     transmission: 'أوتوماتيك',
     luggage: 2,
-    availableCount: 15,
+    availableCount: Object.values(initialBranchStock).reduce((sum, v) => sum + Number(v), 0),
+    branchStock: initialBranchStock,
     image: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=600&auto=format&fit=crop&q=80',
     badge: 'الأكثر طلباً',
     features: 'تكييف ممتاز, بلوتوث, حساسات خلفية',
@@ -216,11 +242,24 @@ function openEditCarModal(c) {
     ? c.features.join(', ') 
     : (c.features || '')
 
+  const resolvedEngine = carStore.getEngineTypeId(c.engineType) || String(c.engineType || '1')
+  const resolvedFuel = carStore.getFuelTypeId(c.fuelType) || String(c.fuelType || '1')
+
+  const existingStock = c.branchStock || (typeof c.branchStockJson === 'string' ? JSON.parse(c.branchStockJson || '{}') : {})
+  const branchStockMap = {}
+  branchStore.branches.forEach(b => {
+    const bId = String(b.id)
+    branchStockMap[bId] = existingStock[bId] !== undefined ? Number(existingStock[bId]) : 0
+  })
+
   carForm.value = {
     name: c.name || '',
     orSimilar: c.orSimilar || 'أو ما شابه ذلك',
     year: c.year || 2026,
     categoryId: c.categoryId || 'economy',
+    engineType: resolvedEngine,
+    fuelType: resolvedFuel,
+    branchId: c.branchId !== undefined && c.branchId !== null ? String(c.branchId) : 'all',
     dailyRate: c.dailyRate || 140,
     weeklyDiscount: typeof c.weeklyDiscount === 'number' ? (c.weeklyDiscount < 1 ? c.weeklyDiscount * 100 : c.weeklyDiscount) : 10,
     monthlyDiscount: typeof c.monthlyDiscount === 'number' ? (c.monthlyDiscount < 1 ? c.monthlyDiscount * 100 : c.monthlyDiscount) : 25,
@@ -228,7 +267,8 @@ function openEditCarModal(c) {
     doors: c.doors || 4,
     transmission: c.transmission || 'أوتوماتيك',
     luggage: c.luggage || 2,
-    availableCount: c.availableCount || 10,
+    availableCount: Object.values(branchStockMap).reduce((sum, v) => sum + Number(v), 0),
+    branchStock: branchStockMap,
     image: c.image || '',
     badge: c.badge || 'الأكثر طلباً',
     features: featuresText,
@@ -237,13 +277,104 @@ function openEditCarModal(c) {
   isCarModalOpen.value = true
 }
 
-function saveCar() {
-  if (editingCarId.value) {
-    carStore.updateCar(editingCarId.value, carForm.value)
+function syncCarFormAvailableCount() {
+  if (!carForm.value.branchStock) return
+  let total = 0
+  Object.values(carForm.value.branchStock).forEach(val => {
+    total += Number(val) || 0
+  })
+  carForm.value.availableCount = total
+}
+
+function calculateTotalStockFromBranches() {
+  if (!carForm.value.branchStock) return carForm.value.availableCount || 0
+  let total = 0
+  Object.values(carForm.value.branchStock).forEach(val => {
+    total += Number(val) || 0
+  })
+  return total
+}
+
+const activeBranchPopoverCarId = ref(null)
+
+function toggleBranchPopover(carId) {
+  if (activeBranchPopoverCarId.value === carId) {
+    activeBranchPopoverCarId.value = null
   } else {
-    carStore.addCar(carForm.value)
+    activeBranchPopoverCarId.value = carId
   }
-  isCarModalOpen.value = false
+}
+
+function getBranchStockList(car) {
+  if (!car) return []
+  const stock = car.branchStock || (typeof car.branchStockJson === 'string' ? JSON.parse(car.branchStockJson || '{}') : {})
+  const list = []
+  
+  if (stock && Object.keys(stock).length > 0) {
+    branchStore.branches.forEach(b => {
+      const bId = String(b.id)
+      if (stock[bId] !== undefined) {
+        list.push({
+          id: bId,
+          name: b.name,
+          cityName: b.cityName,
+          count: Number(stock[bId]) || 0
+        })
+      }
+    })
+  }
+
+  if (list.length === 0) {
+    if (car.branchId === 'all' || !car.branchId) {
+      branchStore.branches.forEach(b => {
+        list.push({ id: String(b.id), name: b.name, cityName: b.cityName, count: car.availableCount || 1 })
+      })
+    } else {
+      const branch = branchStore.branches.find(b => String(b.id) === String(car.branchId))
+      list.push({
+        id: String(car.branchId),
+        name: branch ? branch.name : getBranchDisplayName(car.branchId),
+        cityName: branch ? branch.cityName : '',
+        count: car.availableCount || 1
+      })
+    }
+  }
+  return list
+}
+
+function getActiveBranchesCount(car) {
+  const list = getBranchStockList(car)
+  const availableInBranches = list.filter(item => item.count > 0)
+  return availableInBranches.length || list.length
+}
+
+async function saveCar() {
+  if (!carForm.value.name || !carForm.value.name.trim()) {
+    alert('يرجى إدخال اسم السيارة والموديل')
+    return
+  }
+  if (!carForm.value.dailyRate || carForm.value.dailyRate <= 0) {
+    alert('يرجى إدخال السعر اليومي الصحيح للسيارة')
+    return
+  }
+
+  const catObj = carStore.categories.find(c => c.id === carForm.value.categoryId)
+  if (catObj) {
+    carForm.value.category = catObj.name
+  }
+
+  try {
+    if (editingCarId.value) {
+      await carStore.updateCar(editingCarId.value, carForm.value)
+      alert('تم تعديل بيانات السيارة في قاعدة البيانات بنجاح! 🚗')
+    } else {
+      await carStore.addCar(carForm.value)
+      alert('تم إضافة السيارة الجديدة وحفظها في قاعدة البيانات بنجاح! 🚗✨')
+    }
+    isCarModalOpen.value = false
+  } catch (err) {
+    alert('خطأ أثناء حفظ السيارة في قاعدة البيانات: ' + err.message)
+  }
 }
 
 // Branch Form State
@@ -307,6 +438,276 @@ function saveBranch() {
     branchStore.addBranch(branchForm.value)
   }
   isBranchModalOpen.value = false
+}
+
+// Insurance Options CMS State
+const isInsuranceModalOpen = ref(false)
+const editingInsuranceId = ref(null)
+const insuranceForm = ref({
+  code: '',
+  name: '',
+  pricePerDay: 0,
+  deductibleAmount: 0,
+  badge: 'تغطية مميزة',
+  desc: '',
+  features: '',
+  isActive: true
+})
+
+function openAddInsuranceModal() {
+  editingInsuranceId.value = null
+  insuranceForm.value = {
+    code: 'ins_' + Date.now(),
+    name: '',
+    pricePerDay: 35,
+    deductibleAmount: 0,
+    badge: 'شامل 0 ر.س',
+    desc: 'تغطية شاملة للمركبة والسائق بدون نسبة تحمل عند الأضرار',
+    features: 'تغطية الحوادث, الإعفاء التام من نسبة التحمل, تغطية الركاب',
+    isActive: true
+  }
+  isInsuranceModalOpen.value = true
+}
+
+function openEditInsuranceModal(opt) {
+  editingInsuranceId.value = opt.id
+  insuranceForm.value = {
+    code: opt.code || opt.id,
+    name: opt.name || '',
+    pricePerDay: opt.pricePerDay || 0,
+    deductibleAmount: opt.deductibleAmount !== undefined ? opt.deductibleAmount : 0,
+    badge: opt.badge || '',
+    desc: opt.desc || '',
+    features: Array.isArray(opt.features) ? opt.features.join(', ') : (opt.features || ''),
+    isActive: opt.isActive !== undefined ? opt.isActive : true
+  }
+  isInsuranceModalOpen.value = true
+}
+
+function saveInsuranceOption() {
+  if (editingInsuranceId.value) {
+    bookingStore.updateInsuranceOption(editingInsuranceId.value, insuranceForm.value)
+  } else {
+    bookingStore.addInsuranceOption(insuranceForm.value)
+  }
+  isInsuranceModalOpen.value = false
+}
+
+// Addons & Extra Services CMS State
+const isAddonModalOpen = ref(false)
+const editingAddonId = ref(null)
+const addonForm = ref({
+  name: '',
+  pricingMode: 'daily',
+  pricePerDay: 20,
+  oneTimePrice: 0,
+  desc: '',
+  icon: 'Sparkles',
+  isActive: true
+})
+
+function openAddAddonModal() {
+  editingAddonId.value = null
+  addonForm.value = {
+    name: '',
+    pricingMode: 'daily',
+    pricePerDay: 20,
+    oneTimePrice: 0,
+    desc: 'إضافة مميزة لرحلتك',
+    icon: 'Sparkles',
+    isActive: true
+  }
+  isAddonModalOpen.value = true
+}
+
+function openEditAddonModal(item) {
+  editingAddonId.value = item.id
+  addonForm.value = {
+    name: item.name || '',
+    pricingMode: item.pricingMode || 'daily',
+    pricePerDay: item.pricePerDay || 0,
+    oneTimePrice: item.oneTimePrice || 0,
+    desc: item.desc || '',
+    icon: item.icon || 'Sparkles',
+    isActive: item.isActive !== undefined ? item.isActive : true
+  }
+  isAddonModalOpen.value = true
+}
+
+function saveAddon() {
+  if (editingAddonId.value) {
+    bookingStore.updateAddOn(editingAddonId.value, addonForm.value)
+  } else {
+    bookingStore.addAddOn(addonForm.value)
+  }
+  isAddonModalOpen.value = false
+}
+
+// Lookups CMS Management State (أنواع المحركات، الوقود، الفئات)
+const isLookupModalOpen = ref(false)
+const lookupTargetType = ref('engine') // 'engine', 'fuel', 'category'
+const editingLookupKey = ref(null)
+const lookupForm = ref({
+  id: '',
+  name: ''
+})
+
+function openAddLookupModal(type) {
+  lookupTargetType.value = type
+  editingLookupKey.value = null
+  lookupForm.value = {
+    id: type === 'category' ? 'cat_' + Date.now() : '',
+    name: ''
+  }
+  isLookupModalOpen.value = true
+}
+
+function openEditLookupModal(type, item) {
+  lookupTargetType.value = type
+  if (type === 'category') {
+    editingLookupKey.value = item.id
+    lookupForm.value = {
+      id: item.id,
+      name: item.name
+    }
+  } else {
+    editingLookupKey.value = item
+    lookupForm.value = {
+      id: item,
+      name: item
+    }
+  }
+  isLookupModalOpen.value = true
+}
+
+function saveLookupItem() {
+  if (!lookupForm.value.name.trim()) return
+
+  if (lookupTargetType.value === 'engine') {
+    if (editingLookupKey.value) {
+      carStore.updateEngineType(editingLookupKey.value, lookupForm.value.name.trim())
+    } else {
+      carStore.addEngineType(lookupForm.value.name.trim())
+    }
+  } else if (lookupTargetType.value === 'fuel') {
+    if (editingLookupKey.value) {
+      carStore.updateFuelType(editingLookupKey.value, lookupForm.value.name.trim())
+    } else {
+      carStore.addFuelType(lookupForm.value.name.trim())
+    }
+  } else if (lookupTargetType.value === 'category') {
+    if (editingLookupKey.value) {
+      carStore.updateCategory(editingLookupKey.value, lookupForm.value.name.trim())
+    } else {
+      carStore.addCategory({
+        id: lookupForm.value.id || ('cat_' + Date.now()),
+        name: lookupForm.value.name.trim()
+      })
+    }
+  }
+  isLookupModalOpen.value = false
+}
+
+// Handover, Dispatch & Return State
+const isDispatchModalOpen = ref(false)
+const selectedDispatchBooking = ref(null)
+const dispatchForm = ref({
+  plateNumber: '',
+  vinNumber: '',
+  pickupOdometer: 15000,
+  pickupFuelLevel: '100%',
+  dispatchNotes: 'السيارة نظيفة ومفحوصة بالكامل جاهزة للاستلام'
+})
+
+function openDispatchModal(b) {
+  selectedDispatchBooking.value = b
+  dispatchForm.value = {
+    plateNumber: b.plateNumber || 'أ ب ج 1234',
+    vinNumber: b.vinNumber || 'KMH123456789',
+    pickupOdometer: b.pickupOdometer || 15000,
+    pickupFuelLevel: b.pickupFuelLevel || '100%',
+    dispatchNotes: b.dispatchNotes || 'تم الفحص الفني والتسليم بحالة ممتازة'
+  }
+  isDispatchModalOpen.value = true
+}
+
+async function saveDispatch() {
+  if (!selectedDispatchBooking.value) return
+  try {
+    await apiService.dispatchBooking(selectedDispatchBooking.value.bookingRef, dispatchForm.value)
+    alert('تم تسليم السيارة وتسجيل بيانات الفحص واللوحة بنجاح!')
+    isDispatchModalOpen.value = false
+    fetchAdminBookings()
+  } catch (err) {
+    alert('خطأ أثناء تسليم السيارة: ' + err.message)
+  }
+}
+
+const isReturnModalOpen = ref(false)
+const selectedReturnBooking = ref(null)
+const returnForm = ref({
+  dropoffBranchId: null,
+  returnOdometer: 15350,
+  returnFuelLevel: '100%',
+  returnNotes: 'تم الاستلام بحالة ممتازة ولا توجد أضرار',
+  maintenanceCost: 0
+})
+
+function openReturnModal(b) {
+  selectedReturnBooking.value = b
+  returnForm.value = {
+    dropoffBranchId: b.dropoffBranchId || b.pickupBranchId || (branchStore.branches[0]?.id || 1),
+    returnOdometer: (b.pickupOdometer || 15000) + (b.rentalDays || 1) * 150,
+    returnFuelLevel: '100%',
+    returnNotes: 'تم الفحص عند الإرجاع، السيارة نظيفة وبحالة ممتازة',
+    maintenanceCost: 0
+  }
+  isReturnModalOpen.value = true
+}
+
+async function saveReturn() {
+  if (!selectedReturnBooking.value) return
+  try {
+    await apiService.returnBooking(selectedReturnBooking.value.bookingRef, returnForm.value)
+    alert('تم تأكيد إرجاع السيارة، وإعادة شحن الكمية المتاحة بالأسطول وتوثيق سجل الصيانة بنجاح!')
+    isReturnModalOpen.value = false
+    fetchAdminBookings()
+    fetchMaintenanceRecords()
+    carStore.fetchCarsFromBackend()
+  } catch (err) {
+    alert('خطأ أثناء تسجيل إرجاع السيارة: ' + err.message)
+  }
+}
+
+const maintenanceRecords = ref([])
+const selectedMaintenanceCar = ref(null)
+const isCarHistoryModalOpen = ref(false)
+const selectedMaintenanceCarId = ref('all')
+
+const filteredMaintenanceRecords = computed(() => {
+  let list = maintenanceRecords.value || []
+  if (selectedMaintenanceCarId.value !== 'all') {
+    const targetCarId = String(selectedMaintenanceCarId.value)
+    const targetCarName = selectedMaintenanceCar.value?.name?.toLowerCase() || ''
+    list = list.filter(r => String(r.carId) === targetCarId || (targetCarName && r.carName?.toLowerCase().includes(targetCarName)))
+  }
+  return list
+})
+
+function viewCarMaintenanceHistory(car) {
+  selectedMaintenanceCar.value = car
+  selectedMaintenanceCarId.value = car.id
+  isCarHistoryModalOpen.value = true
+  fetchMaintenanceRecords()
+}
+
+async function fetchMaintenanceRecords() {
+  try {
+    const list = await apiService.getMaintenanceRecords()
+    if (list) maintenanceRecords.value = list
+  } catch (err) {
+    console.error('Error fetching maintenance records:', err)
+  }
 }
 
 function viewLiveSite() {
@@ -409,6 +810,24 @@ function viewLiveSite() {
 
           <button 
             class="nav-tab" 
+            :class="{ active: activeTab === 'insurance' }"
+            @click="activeTab = 'insurance'"
+          >
+            <Shield :size="18" class="text-primary" />
+            <span>إدارة التغطيات التأمينية</span>
+          </button>
+
+          <button 
+            class="nav-tab" 
+            :class="{ active: activeTab === 'addons' }"
+            @click="activeTab = 'addons'"
+          >
+            <Sparkles :size="18" class="text-gold" />
+            <span>إدارة الإضافات والخدمات</span>
+          </button>
+
+          <button 
+            class="nav-tab" 
             :class="{ active: activeTab === 'banners' }"
             @click="activeTab = 'banners'"
           >
@@ -423,6 +842,15 @@ function viewLiveSite() {
           >
             <Car :size="18" />
             <span>إدارة السيارات والأسعار</span>
+          </button>
+
+          <button 
+            class="nav-tab" 
+            :class="{ active: activeTab === 'car_lookups' }"
+            @click="activeTab = 'car_lookups'"
+          >
+            <Settings :size="18" class="text-gold" />
+            <span>إدارة مواصفات السيارات  ⚙️</span>
           </button>
 
           <button 
@@ -672,6 +1100,13 @@ function viewLiveSite() {
                     <td>
                       <div class="font-bold">{{ b.carName }}</div>
                       <span class="badge-subtle">{{ b.carCategory }}</span>
+                      
+                      <!-- Dispatch & Handover Badge Details -->
+                      <div v-if="b.plateNumber || b.dispatchedAt" class="mt-1 p-1 rounded text-xs" style="background: rgba(243, 112, 33, 0.08); border: 1px dashed var(--gold);">
+                        <div>🚗 اللوحة: <strong class="text-primary">{{ b.plateNumber }}</strong></div>
+                        <div v-if="b.pickupOdometer">📟 العداد: <strong>{{ b.pickupOdometer }} كم</strong></div>
+                        <div v-if="b.dispatchedAt" class="text-muted" style="font-size: 0.7rem;">🕒 تسليم: {{ b.dispatchedAt }}</div>
+                      </div>
                     </td>
                     <td>
                       <div class="text-xs font-bold">{{ b.pickupDatetime }}</div>
@@ -693,16 +1128,39 @@ function viewLiveSite() {
                       <span 
                         class="status-pill"
                         :class="{
-                          'active': b.statusKey === 'active' || b.status === 'ساري ونشط',
-                          'completed': b.statusKey === 'completed' || b.status === 'منتهي',
-                          'cancelled': b.statusKey === 'cancelled' || b.status === 'ملغى'
+                          'active': b.statusKey === 'active' || b.status?.includes('بانتظار'),
+                          'dispatched': b.statusKey === 'dispatched' || b.status?.includes('مُسلّمة') || (b.plateNumber && b.statusKey !== 'completed'),
+                          'completed': b.statusKey === 'completed' || b.status?.includes('منتهي'),
+                          'cancelled': b.statusKey === 'cancelled' || b.status?.includes('ملغى')
                         }"
                       >
-                        {{ b.status }}
+                        {{ b.statusKey === 'dispatched' || (b.plateNumber && b.statusKey !== 'completed' && b.statusKey !== 'cancelled') ? '🔑 مُسلّمة للعميل' : b.status }}
                       </span>
                     </td>
                     <td>
-                      <div class="actions-flex">
+                      <div class="actions-flex gap-1" style="display: flex; gap: 0.35rem; align-items: center;">
+                        <button 
+                          v-if="!b.plateNumber && (b.statusKey === 'active' || b.status?.includes('بانتظار'))" 
+                          class="btn btn-sm btn-gold text-xs" 
+                          style="padding: 4px 8px; font-size: 0.75rem;"
+                          title="تسليم السيارة للعميل وتسجيل رقم اللوحة والعداد"
+                          @click="openDispatchModal(b)"
+                        >
+                          <Key :size="12" class="me-1" />
+                          <span>تسليم</span>
+                        </button>
+
+                        <button 
+                          v-if="b.statusKey === 'dispatched' || b.plateNumber || b.statusKey === 'active'" 
+                          class="btn btn-sm btn-outline text-xs" 
+                          style="padding: 4px 8px; font-size: 0.75rem;"
+                          title="تأكيد إرجاع السيارة من العميل وتوثيق الفحص والتسجيل بالصيانة"
+                          @click="openReturnModal(b)"
+                        >
+                          <CheckSquare :size="12" class="me-1" />
+                          <span>إرجاع</span>
+                        </button>
+
                         <button 
                           v-if="b.statusKey !== 'cancelled' && b.status !== 'ملغى'" 
                           class="action-btn danger" 
@@ -721,7 +1179,176 @@ function viewLiveSite() {
         </div>
 
         <!-- ===================================================================
-             TAB 2: HERO BANNERS SLIDER CMS
+             TAB: VEHICLE MAINTENANCE & HANDOVER LOGS
+             =================================================================== -->
+        <div v-else-if="activeTab === 'maintenance'" class="tab-pane">
+          <div class="pane-header flex-between">
+            <div>
+              <h2 class="heading-md">سجلات الفحص وصيانة الأسطول 🔧</h2>
+              <p class="text-muted">السجل التاريخي لكل عملية تسليم، استلام، قراءات العداد، وملاحظات الفحص الدوري للسيارات</p>
+            </div>
+            <button class="btn btn-gold btn-sm" @click="fetchMaintenanceRecords">
+              <RefreshCw :size="16" />
+              <span>تحديث السجلات</span>
+            </button>
+          </div>
+
+          <div class="maintenance-table-card card mt-3">
+            <div class="table-responsive">
+              <table class="cms-table text-sm">
+                <thead>
+                  <tr>
+                    <th>السيارة</th>
+                    <th>مرجع الحجز</th>
+                    <th>نوع الحدث</th>
+                    <th>عداد الكيلومترات</th>
+                    <th>مستوى الوقود</th>
+                    <th>ملاحظات الفحص والبيانات</th>
+                    <th>التكلفة</th>
+                    <th>التاريخ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!maintenanceRecords || !maintenanceRecords.length">
+                    <td colspan="8" class="text-center py-4 text-muted">
+                      لا توجد سجلات صيانة أو إرجاع موثقة حتى الآن. يتم إنشاء السجلات تلقائياً فور تأكيد استلام السيارات من العملاء.
+                    </td>
+                  </tr>
+                  <tr v-for="m in maintenanceRecords" :key="m.id">
+                    <td><strong class="text-dark">{{ m.carName || 'سيارة' }}</strong></td>
+                    <td><code class="badge badge-primary text-xs">{{ m.bookingRef || 'عام' }}</code></td>
+                    <td>
+                      <span class="badge badge-gold">{{ m.recordType || 'فحص وإرجاع' }}</span>
+                    </td>
+                    <td><span class="font-mono font-bold text-primary">{{ m.odometer }} كم</span></td>
+                    <td><span class="badge badge-gold">⛽ {{ m.fuelLevel }}</span></td>
+                    <td><div class="text-xs text-muted" style="max-width: 280px; white-space: normal;">{{ m.description }}</div></td>
+                    <td><strong class="text-success font-mono">{{ m.cost ? `${m.cost} ر.س` : '0.00 ر.س' }}</strong></td>
+                    <td><span class="text-xs text-muted">{{ m.createdAt ? new Date(m.createdAt).toLocaleString('ar-SA') : 'الآن' }}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================================================================
+             TAB 2: INSURANCE OPTIONS CMS (إدارة التغطيات التأمينية)
+             =================================================================== -->
+        <div v-else-if="activeTab === 'insurance'" class="tab-pane">
+          <div class="pane-header flex-between">
+            <div>
+              <h2 class="heading-md">إدارة خيارات التغطية التأمينية 🛡️</h2>
+              <p class="text-muted">إضافة، تعديل مبالغ التحمل وشارة وأسعار التغطيات التأمينية المتاحة للعملاء عند الحجز</p>
+            </div>
+            <button class="btn btn-orange" @click="openAddInsuranceModal">
+              <Plus :size="18" />
+              <span>إضافة تغطية تأمينية جديدة</span>
+            </button>
+          </div>
+
+          <div class="banners-list-grid">
+            <div 
+              v-for="opt in bookingStore.insuranceOptions" 
+              :key="opt.id" 
+              class="banner-item-card card"
+              style="background: linear-gradient(135deg, #071C18 0%, #004D40 100%); color: white;"
+            >
+              <div class="banner-card-top">
+                <span class="badge badge-gold">{{ opt.badge || 'تغطية' }}</span>
+                <span class="badge" :class="opt.isActive !== false ? 'badge-primary' : 'badge-gray'">
+                  {{ opt.isActive !== false ? 'مفعل وتظهر بالحجز' : 'معطل' }}
+                </span>
+              </div>
+
+              <h3 class="b-title" style="color: white; margin-top: 0.5rem;">{{ opt.name }}</h3>
+              <p class="b-sub" style="color: rgba(255,255,255,0.85);">{{ opt.desc }}</p>
+              
+              <div class="mt-2 text-xs" style="color: var(--gold);">
+                <strong>السعر اليومي:</strong> {{ opt.pricePerDay === 0 ? 'مجاناً (0 ر.س)' : `${opt.pricePerDay} ر.س / يوم` }}
+              </div>
+              <div class="text-xs mt-1" style="color: rgba(255,255,255,0.8);">
+                <strong>مبلغ التحمل عند الحادث:</strong> {{ opt.deductibleAmount === 0 ? '0 ر.س (إعفاء تام)' : `${opt.deductibleAmount} ر.س` }}
+              </div>
+
+              <div v-if="opt.features && opt.features.length" class="mt-2 text-xs" style="color: rgba(255,255,255,0.7);">
+                ✔️ {{ Array.isArray(opt.features) ? opt.features.join(' • ') : opt.features }}
+              </div>
+
+              <div class="b-actions mt-3">
+                <button class="btn btn-sm btn-gold" @click="openEditInsuranceModal(opt)">
+                  <Edit :size="14" />
+                  <span>تعديل</span>
+                </button>
+                <button class="btn btn-sm btn-outline" @click="bookingStore.toggleInsuranceActive(opt.id)">
+                  <Power :size="14" />
+                  <span>{{ opt.isActive !== false ? 'تعطيل' : 'تفعيل' }}</span>
+                </button>
+                <button class="btn btn-sm btn-outline-red" @click="bookingStore.deleteInsuranceOption(opt.id)">
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================================================================
+             TAB 3: ADDONS & SERVICES CMS (إدارة الإضافات والخدمات المتاحة)
+             =================================================================== -->
+        <div v-else-if="activeTab === 'addons'" class="tab-pane">
+          <div class="pane-header flex-between">
+            <div>
+              <h2 class="heading-md">إدارة الإضافات والخدمات المتاحة 🧰</h2>
+              <p class="text-muted">التحكم في خدمات الكيلومتر المفتوح، مقاعد الأطفال، السائق الإضافي والتوصيل المعروضة للعميل</p>
+            </div>
+            <button class="btn btn-orange" @click="openAddAddonModal">
+              <Plus :size="18" />
+              <span>إضافة خدمة إضافية</span>
+            </button>
+          </div>
+
+          <div class="banners-list-grid">
+            <div 
+              v-for="item in bookingStore.addOnsList" 
+              :key="item.id" 
+              class="banner-item-card card"
+              style="background: #FFFFFF; border: 1px solid var(--border-light);"
+            >
+              <div class="banner-card-top">
+                <span class="badge badge-primary">{{ item.pricingMode === 'oneTime' ? 'رسوم ثابتة للحجز' : 'سعر يومي' }}</span>
+                <span class="badge" :class="item.isActive !== false ? 'badge-primary' : 'badge-gray'">
+                  {{ item.isActive !== false ? 'مفعلة وتظهر بالحجز' : 'معطلة' }}
+                </span>
+              </div>
+
+              <h3 class="b-title mt-2" style="color: var(--text-dark);">{{ item.name }}</h3>
+              <p class="b-sub text-muted">{{ item.desc }}</p>
+
+              <div class="mt-2 text-md">
+                <strong class="text-primary font-mono">
+                  {{ item.pricingMode === 'oneTime' ? `+${item.oneTimePrice} ر.س` : `+${item.pricePerDay} ر.س / يوم` }}
+                </strong>
+              </div>
+
+              <div class="b-actions mt-3">
+                <button class="btn btn-sm btn-gold" @click="openEditAddonModal(item)">
+                  <Edit :size="14" />
+                  <span>تعديل</span>
+                </button>
+                <button class="btn btn-sm btn-outline" @click="bookingStore.toggleAddOnActive(item.id)">
+                  <Power :size="14" />
+                  <span>{{ item.isActive !== false ? 'تعطيل' : 'تفعيل' }}</span>
+                </button>
+                <button class="btn btn-sm btn-outline-red" @click="bookingStore.deleteAddOn(item.id)">
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================================================================
+             TAB 4: HERO BANNERS SLIDER CMS
              =================================================================== -->
         <div v-else-if="activeTab === 'banners'" class="tab-pane">
           <div class="pane-header flex-between">
@@ -820,8 +1447,9 @@ function viewLiveSite() {
                   <th>الفئة</th>
                   <th>السعر اليومي</th>
                   <th>الخصومات (أسبوعي/شهري)</th>
+                  <th>المواصفات والوقود والمحرك</th>
+                  <th>الفرع المرتبط 📍</th>
                   <th>المتوفّر بالمخزون</th>
-                  <th>المواصفات والشارة</th>
                   <th>الإجراءات</th>
                 </tr>
               </thead>
@@ -841,16 +1469,59 @@ function viewLiveSite() {
                     <div class="text-xs text-muted">شهري: <strong>{{ Math.round((c.monthlyDiscount || 0.25) * 100) }}%</strong></div>
                   </td>
                   <td>
+                    <div class="text-xs font-bold text-dark">⚡ {{ carStore.getEngineTypeName(c.engineType) }}</div>
+                    <div class="text-xs text-muted">⛽ {{ carStore.getFuelTypeName(c.fuelType) }}</div>
+                    <div class="text-xs text-muted">{{ c.passengers }} ركاب / {{ c.transmission }}</div>
+                  </td>
+                  <td>
+                    <!-- Popover Dropdown Button for Branches -->
+                    <div class="branches-popover-wrapper" :class="{ active: activeBranchPopoverCarId === c.id }">
+                      <button 
+                        class="branches-popover-trigger"
+                        @click.stop="toggleBranchPopover(c.id)"
+                        title="انقر أو تمرر لعرض الفروع والكميات المتاحة"
+                      >
+                        <MapPin :size="14" class="text-gold" />
+                        <span>فروع السيارة ({{ getActiveBranchesCount(c) }})</span>
+                        <ChevronDown :size="14" class="popover-arrow" />
+                      </button>
+
+                      <div class="branches-popover-menu shadow-lg">
+                        <div class="popover-menu-header flex-between mb-1 pb-1 border-bottom">
+                          <strong class="text-xs font-bold text-dark">🏢 الفروع المتواجدة بها السيارة</strong>
+                          <span class="badge badge-gold-outline text-xs">إجمالي: {{ c.availableCount }} سيارة</span>
+                        </div>
+                        <div class="branches-list-scroll custom-scroll" style="max-height: 180px; overflow-y: auto;">
+                          <div 
+                            v-for="bItem in getBranchStockList(c)" 
+                            :key="bItem.id" 
+                            class="branch-stock-row"
+                          >
+                            <div class="branch-info text-start">
+                              <span class="d-block text-xs font-bold text-dark">📍 {{ bItem.name }}</span>
+                              <span v-if="bItem.cityName" class="text-xs text-muted">({{ bItem.cityName }})</span>
+                            </div>
+                            <span 
+                              class="badge text-xs font-bold font-mono ms-2"
+                              :class="bItem.count > 0 ? 'badge-primary' : 'badge-subtle text-muted'"
+                            >
+                              {{ bItem.count > 0 ? `${bItem.count} سيارة` : 'غير متوفر' }}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
                     <span class="stock-pill" :class="c.availableCount > 0 ? 'in-stock' : 'out-stock'">
                       {{ c.availableCount > 0 ? `${c.availableCount} سيارات جاهزة` : 'محجوز بالكامل' }}
                     </span>
                   </td>
                   <td>
-                    <div class="text-xs">{{ c.passengers }} ركاب / {{ c.transmission }}</div>
-                    <span class="badge badge-gold mt-1">{{ c.badge }}</span>
-                  </td>
-                  <td>
                     <div class="tbl-actions">
+                      <button class="action-icon-btn text-gold" @click="viewCarMaintenanceHistory(c)" title="تتبع وسجل صيانة وإيجارات هذه السيارة">
+                        <Wrench :size="16" />
+                      </button>
                       <button class="action-icon-btn" @click="openEditCarModal(c)" title="تعديل السعر والبيانات">
                         <Edit :size="16" />
                       </button>
@@ -887,10 +1558,12 @@ function viewLiveSite() {
                 </span>
               </div>
 
-              <div class="car-specs-row text-xs text-muted mt-2">
+              <div class="car-specs-row text-xs text-muted mt-2 flex-wrap gap-1">
+                <span class="badge badge-outline-gold text-xs">⚡ {{ carStore.getEngineTypeName(c.engineType) }}</span>
+                <span class="badge badge-outline-gold text-xs">⛽ {{ carStore.getFuelTypeName(c.fuelType) }}</span>
+                <span class="badge badge-gold text-xs">{{ getBranchDisplayName(c.branchId) }}</span>
                 <span>👥 {{ c.passengers }} ركاب</span>
                 <span>⚙️ {{ c.transmission }}</span>
-                <span class="badge badge-gold text-xs">{{ c.badge }}</span>
               </div>
 
               <div class="car-admin-actions-bar mt-3">
@@ -903,6 +1576,144 @@ function viewLiveSite() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ===================================================================
+             TAB 4: CAR LOOKUPS & SPECIFICATIONS CMS (إدارة جداول المواصفات واللوكب)
+             =================================================================== -->
+        <div v-else-if="activeTab === 'car_lookups'" class="tab-pane">
+          <div class="pane-header flex-between mb-4">
+            <div>
+              <h2 class="heading-md">إدارة جداول مواصفات السيارات (Lookups CMS) ⚙️🚗</h2>
+              <p class="text-muted">إضافة وتعديل وحذف خيارات نوع المحرك، فئات السيارات، وأناوع الوقود المتاحة بالنظام</p>
+            </div>
+          </div>
+
+          <div class="lookups-grid-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+            
+            <!-- 1. Engine Types Lookup Card -->
+            <div class="lookup-card card">
+              <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid var(--border-light);">
+                <div class="d-flex align-items-center gap-2">
+                  <span style="font-size: 1.25rem;">⚡</span>
+                  <h3 class="heading-sm" style="margin: 0;">أنواع المحركات (Engine Types)</h3>
+                </div>
+                <button class="btn btn-sm btn-orange" @click="openAddLookupModal('engine')">
+                  <Plus :size="14" />
+                  <span>إضافة محرك</span>
+                </button>
+              </div>
+
+              <div class="table-responsive">
+                <table class="cms-table text-sm">
+                  <thead>
+                    <tr>
+                      <th>اسم المحرك / السعة</th>
+                      <th class="text-start">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(eng, idx) in carStore.engineTypes" :key="eng.id || idx">
+                      <td><strong class="text-dark">⚡ {{ eng.name || eng }}</strong> <code v-if="eng.id" class="text-muted text-xs ms-2">(ID: {{ eng.id }})</code></td>
+                      <td class="text-start">
+                        <div class="actions-flex justify-content-end">
+                          <button class="action-icon-btn" @click="openEditLookupModal('engine', eng)" title="تعديل">
+                            <Edit :size="14" />
+                          </button>
+                          <button class="action-icon-btn text-danger" @click="deleteLookupItem('engine', eng)" title="حذف">
+                            <Trash2 :size="14" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 2. Car Categories Lookup Card -->
+            <div class="lookup-card card">
+              <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid var(--border-light);">
+                <div class="d-flex align-items-center gap-2">
+                  <span style="font-size: 1.25rem;">🚘</span>
+                  <h3 class="heading-sm" style="margin: 0;">فئات السيارات (Car Categories)</h3>
+                </div>
+                <button class="btn btn-sm btn-orange" @click="openAddLookupModal('category')">
+                  <Plus :size="14" />
+                  <span>إضافة فئة</span>
+                </button>
+              </div>
+
+              <div class="table-responsive">
+                <table class="cms-table text-sm">
+                  <thead>
+                    <tr>
+                      <th>معرف الفئة (ID)</th>
+                      <th>اسم الفئة</th>
+                      <th class="text-start">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="cat in carStore.categories.filter(c => c.id !== 'all')" :key="cat.id">
+                      <td><code class="text-muted text-xs">{{ cat.id }}</code></td>
+                      <td><span class="badge badge-primary">{{ cat.name }}</span></td>
+                      <td class="text-start">
+                        <div class="actions-flex justify-content-end">
+                          <button class="action-icon-btn" @click="openEditLookupModal('category', cat)" title="تعديل">
+                            <Edit :size="14" />
+                          </button>
+                          <button class="action-icon-btn text-danger" @click="deleteLookupItem('category', cat)" title="حذف">
+                            <Trash2 :size="14" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 3. Fuel Types Lookup Card -->
+            <div class="lookup-card card">
+              <div class="flex-between mb-3 pb-2" style="border-bottom: 1px solid var(--border-light);">
+                <div class="d-flex align-items-center gap-2">
+                  <span style="font-size: 1.25rem;">⛽</span>
+                  <h3 class="heading-sm" style="margin: 0;">أنواع الوقود (Fuel Types)</h3>
+                </div>
+                <button class="btn btn-sm btn-orange" @click="openAddLookupModal('fuel')">
+                  <Plus :size="14" />
+                  <span>إضافة نوع وقود</span>
+                </button>
+              </div>
+
+              <div class="table-responsive">
+                <table class="cms-table text-sm">
+                  <thead>
+                    <tr>
+                      <th>نوع الوقود</th>
+                      <th class="text-start">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(fuel, idx) in carStore.fuelTypes" :key="fuel.id || idx">
+                      <td><strong class="text-dark">⛽ {{ fuel.name || fuel }}</strong> <code v-if="fuel.id" class="text-muted text-xs ms-2">(ID: {{ fuel.id }})</code></td>
+                      <td class="text-start">
+                        <div class="actions-flex justify-content-end">
+                          <button class="action-icon-btn" @click="openEditLookupModal('fuel', fuel)" title="تعديل">
+                            <Edit :size="14" />
+                          </button>
+                          <button class="action-icon-btn text-danger" @click="deleteLookupItem('fuel', fuel)" title="حذف">
+                            <Trash2 :size="14" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -1039,20 +1850,55 @@ function viewLiveSite() {
               </div>
             </div>
 
-            <div class="form-grid">
-              <div class="form-group">
-                <label class="form-label">فئة السيارة (category_id) *</label>
-                <select v-model="carForm.categoryId" class="form-control form-select">
-                  <option value="economy">اقتصادية (economy)</option>
-                  <option value="compact">صغيرة (compact)</option>
-                  <option value="midsize">سدان متوسطة (midsize)</option>
-                  <option value="luxury">فخمة (luxury)</option>
-                  <option value="suv">عائلية / SUV</option>
-                  <option value="commercial">تجارية (commercial)</option>
-                  <option value="premium">بريميوم (premium)</option>
-                </select>
+            <!-- Lookups Specifications & Branch Linking (مواصفات اللوكب والفرع المرتبط) -->
+            <div class="card p-3 mb-3" style="background: rgba(243, 112, 33, 0.05); border: 1px solid rgba(243, 112, 33, 0.2); border-radius: 10px;">
+              <h4 style="font-size: 0.95rem; font-weight: bold; color: var(--primary); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                <span>⚙️ مواصفات السيارة والفرع المرتبط (Lookups)</span>
+              </h4>
+
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">فئة السيارة (Car Category) *</label>
+                  <select v-model="carForm.categoryId" class="form-control form-select">
+                    <option v-for="cat in carStore.categories.filter(c => c.id !== 'all')" :key="cat.id" :value="cat.id">
+                      {{ cat.name }} ({{ cat.id }})
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">نوع المحرك (Engine Capacity) *</label>
+                  <select v-model="carForm.engineType" class="form-control form-select">
+                    <option v-for="eng in carStore.engineTypes" :key="eng.id || eng" :value="String(eng.id || eng)">
+                      ⚡ {{ eng.name || eng }}
+                    </option>
+                  </select>
+                </div>
               </div>
 
+              <div class="form-grid mt-2">
+                <div class="form-group">
+                  <label class="form-label">نوع الوقود (Fuel Type) *</label>
+                  <select v-model="carForm.fuelType" class="form-control form-select">
+                    <option v-for="fuel in carStore.fuelTypes" :key="fuel.id || fuel" :value="String(fuel.id || fuel)">
+                      ⛽ {{ fuel.name || fuel }}
+                    </option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">ربط السيارة بالفرع (Branch Assignment) 📍 *</label>
+                  <select v-model="carForm.branchId" class="form-control form-select">
+                    <option value="all">📍 جميع الفروع (متوفرة بكافة الفروع والموقع)</option>
+                    <option v-for="b in branchStore.branches" :key="b.id" :value="b.id">
+                      {{ b.name }} ({{ b.cityName }})
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-grid">
               <div class="form-group">
                 <label class="form-label">السعر اليومي - daily_rate (ر.س) *</label>
                 <input type="number" step="0.01" v-model.number="carForm.dailyRate" class="form-control" required />
@@ -1078,8 +1924,31 @@ function viewLiveSite() {
               </div>
 
               <div class="form-group">
-                <label class="form-label">الكمية المتوفرة (available_stock)</label>
-                <input type="number" v-model.number="carForm.availableCount" class="form-control" />
+                <label class="form-label">إجمالي السيارات المتوفرة (auto-calculated)</label>
+                <input type="number" v-model.number="carForm.availableCount" class="form-control font-bold" readonly />
+              </div>
+            </div>
+
+            <!-- Branch Stock Distribution Section -->
+            <div class="form-group mb-3 p-3 rounded-lg border" style="background: var(--bg-subtle);">
+              <label class="form-label d-flex align-items-center justify-between text-dark font-bold mb-2">
+                <span>📍 توزيع وتحديد أعداد السيارات المتوفرة في كل فرع</span>
+                <span class="badge badge-gold">إجمالي الأسطول: {{ calculateTotalStockFromBranches() }} سيارات</span>
+              </label>
+              <div class="branch-stock-inputs-grid grid-2 gap-2">
+                <div v-for="b in branchStore.branches" :key="b.id" class="branch-stock-input-item p-2 rounded border" style="background: var(--bg-card);">
+                  <div class="text-xs font-bold text-dark mb-1">📍 {{ b.name }} ({{ b.cityName }})</div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input 
+                      type="number" 
+                      min="0" 
+                      v-model.number="carForm.branchStock[String(b.id)]" 
+                      class="form-control form-control-sm text-center font-bold" 
+                      @input="syncCarFormAvailableCount"
+                    />
+                    <span class="text-xs text-muted">سيارات</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1208,6 +2077,358 @@ function viewLiveSite() {
           <div class="modal-footer">
             <button class="btn btn-outline" @click="isBranchModalOpen = false">إلغاء</button>
             <button class="btn btn-primary" @click="saveBranch">حفظ الفرع</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Insurance Option Add/Edit Modal -->
+    <Teleport to="body">
+      <div v-if="isInsuranceModalOpen" class="modal-overlay" @click="isInsuranceModalOpen = false">
+        <div class="modal-card card" @click.stop>
+          <div class="modal-header">
+            <h3>{{ editingInsuranceId ? 'تعديل التغطية التأمينية' : 'إضافة تغطية تأمينية جديدة' }} 🛡️</h3>
+            <button class="close-btn" @click="isInsuranceModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">اسم التغطية التأمينية *</label>
+                <input type="text" v-model="insuranceForm.name" class="form-control" required placeholder="مثال: أمان المطارات والتغطية الشاملة" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">الشارة المميزة (Badge)</label>
+                <input type="text" v-model="insuranceForm.badge" class="form-control" placeholder="مثال: الأكثر طلباً / شامل 0 ر.س" />
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">السعر اليومي (ر.س/يوم) *</label>
+                <input type="number" step="0.01" v-model.number="insuranceForm.pricePerDay" class="form-control" required placeholder="0 للمجاني" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">مبلغ التحمل عند الحادث (ر.س) *</label>
+                <input type="number" step="0.01" v-model.number="insuranceForm.deductibleAmount" class="form-control" required placeholder="0 للإعفاء التام" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">الوصف التفصيلي للتغطية</label>
+              <textarea v-model="insuranceForm.desc" class="form-control" rows="2" placeholder="تغطية شاملة للمركبة والإعفاء التام من نسبة التحمل..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">المميزات والفوائد (مفصولة بفاصلة)</label>
+              <textarea v-model="insuranceForm.features" class="form-control" rows="2" placeholder="تغطية الحوادث, الإعفاء التام من نسبة التحمل, تغطية الركاب"></textarea>
+            </div>
+
+            <label class="checkbox-label mt-2">
+              <input type="checkbox" v-model="insuranceForm.isActive" />
+              <span>التغطية مفعلة وتظهر للعميل في خطوة الحجز (is_active)</span>
+            </label>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isInsuranceModalOpen = false">إلغاء</button>
+            <button class="btn btn-primary" @click="saveInsuranceOption">حفظ التغطية التأمينية</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Addon & Extra Service Add/Edit Modal -->
+    <Teleport to="body">
+      <div v-if="isAddonModalOpen" class="modal-overlay" @click="isAddonModalOpen = false">
+        <div class="modal-card card" @click.stop>
+          <div class="modal-header">
+            <h3>{{ editingAddonId ? 'تعديل الخدمة الإضافية' : 'إضافة خدمة إضافية جديدة' }} 🧰</h3>
+            <button class="close-btn" @click="isAddonModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="form-label">اسم الخدمة أو الإضافة *</label>
+              <input type="text" v-model="addonForm.name" class="form-control" required placeholder="مثال: مقعد أطفال آمن معتمد" />
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">نوع السعر وحسابه *</label>
+                <select v-model="addonForm.pricingMode" class="form-control form-select">
+                  <option value="daily">سعر يومي مكرر (ر.س / يوم)</option>
+                  <option value="oneTime">رسوم ثابتة للحجز كاملاً (ر.س)</option>
+                </select>
+              </div>
+
+              <div v-if="addonForm.pricingMode === 'daily'" class="form-group">
+                <label class="form-label">السعر اليومي (ر.س/يوم) *</label>
+                <input type="number" step="0.01" v-model.number="addonForm.pricePerDay" class="form-control" required />
+              </div>
+
+              <div v-else class="form-group">
+                <label class="form-label">الرسوم الثابتة للحجز (ر.س) *</label>
+                <input type="number" step="0.01" v-model.number="addonForm.oneTimePrice" class="form-control" required />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">الوصف المختصر للخدمة</label>
+              <textarea v-model="addonForm.desc" class="form-control" rows="2" placeholder="مقعد مريح ومطابق لأعلى معايير الأمان والسلامة للأطفال..."></textarea>
+            </div>
+
+            <label class="checkbox-label mt-2">
+              <input type="checkbox" v-model="addonForm.isActive" />
+              <span>الخدمة مفعلة وتظهر للعميل في خطوات الحجز (is_active)</span>
+            </label>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isAddonModalOpen = false">إلغاء</button>
+            <button class="btn btn-primary" @click="saveAddon">حفظ الخدمة الإضافية</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Generic Lookup Item Add/Edit Modal -->
+    <Teleport to="body">
+      <div v-if="isLookupModalOpen" class="modal-overlay" @click="isLookupModalOpen = false">
+        <div class="modal-card card" @click.stop style="max-width: 480px;">
+          <div class="modal-header">
+            <h3>
+              {{ editingLookupKey ? 'تعديل عنصر اللوكب' : 'إضافة عنصر لوكب جديد' }}
+              {{ lookupTargetType === 'engine' ? '⚡ (نوع محرك)' : lookupTargetType === 'fuel' ? '⛽ (نوع وقود)' : '🚘 (فئة سيارات)' }}
+            </h3>
+            <button class="close-btn" @click="isLookupModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div v-if="lookupTargetType === 'category' && !editingLookupKey" class="form-group mb-3">
+              <label class="form-label">معرف الفئة بالإنجليزية (category_id) *</label>
+              <input type="text" v-model="lookupForm.id" class="form-control" required placeholder="مثال: sports / crossover" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                {{ lookupTargetType === 'engine' ? 'اسم ونوع المحرك والسعة *' : lookupTargetType === 'fuel' ? 'اسم ونوع الوقود *' : 'اسم فئة السيارة بالعربي *' }}
+              </label>
+              <input 
+                type="text" 
+                v-model="lookupForm.name" 
+                class="form-control" 
+                required 
+                :placeholder="lookupTargetType === 'engine' ? 'مثال: 6 سلندر 3.0L توين توربو' : lookupTargetType === 'fuel' ? 'مثال: بنزين 98 / غاز طبيعي' : 'مثال: رياضية / كابريوليه'" 
+                @keyup.enter="saveLookupItem"
+              />
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isLookupModalOpen = false">إلغاء</button>
+            <button class="btn btn-primary" @click="saveLookupItem">حفظ العنصر</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Vehicle Dispatch Modal (تسليم السيارة للعميل) -->
+    <Teleport to="body">
+      <div v-if="isDispatchModalOpen" class="modal-overlay" @click="isDispatchModalOpen = false">
+        <div class="modal-card card" @click.stop style="max-width: 550px;">
+          <div class="modal-header">
+            <h3>تسليم السيارة للعميل 🔑 (مرجع: {{ selectedDispatchBooking?.bookingRef }})</h3>
+            <button class="close-btn" @click="isDispatchModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="alert alert-info text-xs mb-3" style="background: rgba(243, 112, 33, 0.1); border: 1px solid var(--primary); padding: 8px 12px; border-radius: 8px; color: var(--primary);">
+              تسجيل بيانات المركبة المحددة للمستأجر (رقم اللوحة، العداد عند الاستلام، والفحص الفني)
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">رقم لوحة السيارة *</label>
+                <input type="text" v-model="dispatchForm.plateNumber" class="form-control" placeholder="أ ب ج 1234" required />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">الرقم التسلسلي / الشاسي (VIN)</label>
+                <input type="text" v-model="dispatchForm.vinNumber" class="form-control" placeholder="KMH123456789" />
+              </div>
+            </div>
+
+            <div class="form-grid mt-2">
+              <div class="form-group">
+                <label class="form-label">قراءة العداد عند التسليم (كم) *</label>
+                <input type="number" v-model.number="dispatchForm.pickupOdometer" class="form-control" required />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">مستوى البنزين / الوقود *</label>
+                <select v-model="dispatchForm.pickupFuelLevel" class="form-control form-select">
+                  <option value="100%">فل (100% ⛽)</option>
+                  <option value="75%">ثلاثة أرباع (75%)</option>
+                  <option value="50%">نصف (50%)</option>
+                  <option value="25%">الربع (25%)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group mt-2">
+              <label class="form-label">ملاحظات وقائمة فحص الاستلام</label>
+              <textarea v-model="dispatchForm.dispatchNotes" class="form-control" rows="2" placeholder="السيارة نظيفة ومفحوصة بالكامل"></textarea>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isDispatchModalOpen = false">إلغاء</button>
+            <button class="btn btn-gold" @click="saveDispatch">تأكيد تسليم المركبة للعميل 🔑</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Vehicle Return & Maintenance Modal (تأكيد إرجاع السيارة) -->
+    <Teleport to="body">
+      <div v-if="isReturnModalOpen" class="modal-overlay" @click="isReturnModalOpen = false">
+        <div class="modal-card card" @click.stop style="max-width: 550px;">
+          <div class="modal-header">
+            <h3>تأكيد إرجاع السيارة وإغلاق العقد 🏁 (مرجع: {{ selectedReturnBooking?.bookingRef }})</h3>
+            <button class="close-btn" @click="isReturnModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="alert alert-success text-xs mb-3" style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); padding: 8px 12px; border-radius: 8px; color: var(--success);">
+              عند تأكيد الإرجاع، سيتم تحديث العداد، وإعادة شحن كمية السيارات المتاحة بالأسطول (+1) بالفرع المحدد أدناه، وتوثيق سجل فحص وصيانة جديد تلقائياً.
+            </div>
+
+            <div class="form-group mb-3">
+              <label class="form-label font-bold text-dark">🏢 فرع تسليم وإرجاع السيارة (محدد مسبقاً مع إمكانية التغيير) *</label>
+              <select v-model="returnForm.dropoffBranchId" class="form-control form-select border-gold">
+                <option v-for="b in branchStore.branches" :key="b.id" :value="b.id">
+                  📍 {{ b.name }} ({{ b.cityName }}) {{ b.isAirport ? '✈️' : '' }}
+                </option>
+              </select>
+              <small class="text-muted d-block mt-1" style="font-size: 0.78rem;">
+                الفرع الظاهر هو المحدد مسبقاً في طلب الحجز. يمكنك تغييره هنا إذا سلّم العميل السيارة في فرع مختلف وسيقوم النظام بزيادة الكمية المتاحة (+1) بهذا الفرع المختار.
+              </small>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">قراءة العداد عند الإرجاع (كم) *</label>
+                <input type="number" v-model.number="returnForm.returnOdometer" class="form-control" required />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">مستوى البنزين عند الإرجاع *</label>
+                <select v-model="returnForm.returnFuelLevel" class="form-control form-select">
+                  <option value="100%">فل (100% ⛽)</option>
+                  <option value="75%">ثلاثة أرباع (75%)</option>
+                  <option value="50%">نصف (50%)</option>
+                  <option value="25%">الربع (25%)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group mt-2">
+              <label class="form-label">تكلفة الصيانة أو الغسيل إن وجدت (ر.س)</label>
+              <input type="number" step="0.01" v-model.number="returnForm.maintenanceCost" class="form-control" placeholder="0.00" />
+            </div>
+
+            <div class="form-group mt-2">
+              <label class="form-label">ملاحظات الفحص، الأضرار، والنظافة عند الاستلام</label>
+              <textarea v-model="returnForm.returnNotes" class="form-control" rows="2" placeholder="تم الفحص عند الإرجاع، السيارة نظيفة وبحالة ممتازة"></textarea>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isReturnModalOpen = false">إلغاء</button>
+            <button class="btn btn-primary" @click="saveReturn">تأكيد الاستلام وتوثيق الصيانة 🏁</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Dedicated Car Maintenance & Event History Modal (تقرير وتتبع سجل صيانة وإيجارات السيارة) -->
+    <Teleport to="body">
+      <div v-if="isCarHistoryModalOpen" class="modal-overlay" @click="isCarHistoryModalOpen = false">
+        <div class="modal-card card" @click.stop style="max-width: 750px; width: 90%;">
+          <div class="modal-header" style="background: linear-gradient(135deg, #071C18 0%, #004D40 100%); color: white; border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 1.25rem;">
+            <div>
+              <span class="badge badge-gold mb-1">تقرير وسجل أحداث المركبة</span>
+              <h3 style="color: white; margin: 0;">🔧 {{ selectedMaintenanceCar?.name }} (موديل {{ selectedMaintenanceCar?.year }})</h3>
+            </div>
+            <button class="close-btn" style="color: white;" @click="isCarHistoryModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body" style="padding: 1.5rem;">
+            <!-- Car Summary Specs Grid -->
+            <div class="grid grid-3 gap-3 mb-4 p-3 rounded" style="background: var(--bg-subtle); border: 1px solid var(--border-light);">
+              <div>
+                <span class="text-xs text-muted d-block">الفئة والمواصفات:</span>
+                <strong class="text-dark">{{ selectedMaintenanceCar?.category }} ({{ carStore.getEngineTypeName(selectedMaintenanceCar?.engineType) }})</strong>
+              </div>
+              <div>
+                <span class="text-xs text-muted d-block">الفرع المرتبط:</span>
+                <strong class="text-primary">{{ getBranchDisplayName(selectedMaintenanceCar?.branchId) }}</strong>
+              </div>
+              <div>
+                <span class="text-xs text-muted d-block">السيارات المتاحة بالفرع:</span>
+                <strong class="text-success">{{ selectedMaintenanceCar?.availableCount || 0 }} جاهزة للاستخدام</strong>
+              </div>
+            </div>
+
+            <!-- Maintenance & Handover Events Timeline -->
+            <h4 class="font-bold text-dark mb-3 flex-between">
+              <span>📜 سجل عمليات الفحص والتسليم والإرجاع المقيدة:</span>
+              <span class="badge badge-gold text-xs">{{ filteredMaintenanceRecords.length }} أحداث موثقة</span>
+            </h4>
+
+            <div v-if="!filteredMaintenanceRecords || !filteredMaintenanceRecords.length" class="text-center py-4 text-muted card bg-subtle p-4">
+              <Wrench :size="36" class="text-muted mb-2 opacity-50" />
+              <p>لا توجد سجلات صيانة أو تسليمات مسجلة لهذه السيارة حتى الآن.</p>
+              <span class="text-xs">يتم توثيق كل عملية تسليم (🔑) أو استلام وإرجاع (🏁) تلقائياً عند خدمة العملاء.</span>
+            </div>
+
+            <div v-else class="timeline-records-list">
+              <div 
+                v-for="rec in filteredMaintenanceRecords" 
+                :key="rec.id" 
+                class="timeline-item card mb-3 p-3"
+                style="border-right: 4px solid var(--primary);"
+              >
+                <div class="flex-between mb-2">
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="badge" :class="rec.recordType?.includes('تسليم') ? 'badge-gold' : 'badge-primary'">
+                      {{ rec.recordType || 'فحص وصيانة' }}
+                    </span>
+                    <strong class="text-dark text-sm">مرجع العقد: {{ rec.bookingRef || 'عام' }}</strong>
+                  </div>
+                  <span class="text-xs text-muted font-mono">🕒 {{ new Date(rec.createdAt).toLocaleString('ar-SA') }}</span>
+                </div>
+
+                <div class="grid grid-3 gap-2 text-xs mb-2 p-2 rounded" style="background: rgba(0,77,64,0.04);">
+                  <div>📟 العداد: <strong>{{ rec.odometer ? `${rec.odometer} كم` : 'غير محدد' }}</strong></div>
+                  <div>⛽ الوقود: <strong class="text-success">{{ rec.fuelLevel || '100%' }}</strong></div>
+                  <div>💰 التكلفة: <strong class="text-gold">{{ rec.cost ? `${rec.cost} ر.س` : '0.00 ر.س' }}</strong></div>
+                </div>
+
+                <p class="text-xs text-dark mb-0"><strong>ملاحظات وبيانات الحدث:</strong> {{ rec.description }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer flex-between">
+            <button class="btn btn-outline-primary btn-sm" @click="window.print()">
+              <Printer :size="14" />
+              <span>طباعة تقرير صيانة السيارة</span>
+            </button>
+            <button class="btn btn-primary btn-sm" @click="isCarHistoryModalOpen = false">إغلاق التقرير</button>
           </div>
         </div>
       </div>
@@ -1967,5 +3188,82 @@ function viewLiveSite() {
   .kpi-val {
     font-size: 1.1rem;
   }
+}
+
+/* Branches Popover Styling */
+.branches-popover-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.branches-popover-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  background: var(--gold-light, #FFF9E6);
+  color: #7A5B00;
+  border: 1px solid var(--gold-border, #F3E5AB);
+  border-radius: var(--radius-full, 9999px);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.branches-popover-trigger:hover, 
+.branches-popover-wrapper.active .branches-popover-trigger,
+.branches-popover-wrapper:hover .branches-popover-trigger {
+  background: #D4AF37;
+  color: #071C18;
+  border-color: #B89628;
+  box-shadow: 0 4px 12px rgba(212, 175, 55, 0.3);
+}
+
+.branches-popover-trigger .popover-arrow {
+  transition: transform 0.2s ease;
+}
+
+.branches-popover-wrapper.active .popover-arrow,
+.branches-popover-wrapper:hover .popover-arrow {
+  transform: rotate(180deg);
+}
+
+.branches-popover-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 1080;
+  min-width: 250px;
+  padding: 0.85rem;
+  background: #FFFFFF !important;
+  color: #1E293B !important;
+  border: 1.5px solid rgba(212, 175, 55, 0.4);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.18);
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.branches-popover-wrapper:hover .branches-popover-menu,
+.branches-popover-wrapper.active .branches-popover-menu {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.branch-stock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.25rem;
+  border-bottom: 1px dashed var(--border-light, #E2E8F0);
+}
+
+.branch-stock-row:last-child {
+  border-bottom: none;
 }
 </style>
