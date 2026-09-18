@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch, onMounted } from 'vue'
 import { apiService } from '../services/api'
 import { useBranchStore } from './branchStore'
+import { useCarStore } from './carStore'
 
 export const useBookingStore = defineStore('booking', () => {
   // Rental configuration
@@ -17,13 +18,21 @@ export const useBookingStore = defineStore('booking', () => {
   const dropoffCity = ref('jeddah')
   const dropoffBranchId = ref(1)
 
-  watch(pickupCity, (newCity) => {
+  watch(pickupBranchId, (newId) => {
     const branchStore = useBranchStore()
-    const cityBranches = branchStore.branches.filter(b => b.cityId === newCity)
-    if (cityBranches.length > 0) {
-      pickupBranchId.value = cityBranches[0].id
+    const b = branchStore.branches.find(br => br.id === newId)
+    if (b && b.cityId) {
+      pickupCity.value = b.cityId
     }
-  })
+  }, { immediate: true })
+
+  watch(dropoffBranchId, (newId) => {
+    const branchStore = useBranchStore()
+    const b = branchStore.branches.find(br => br.id === newId)
+    if (b && b.cityId) {
+      dropoffCity.value = b.cityId
+    }
+  }, { immediate: true })
 
   // Dates & Times (Default initial booking: 1 Day duration)
   const now = new Date()
@@ -75,49 +84,28 @@ export const useBookingStore = defineStore('booking', () => {
   // Selected Car
   const selectedCar = ref(null)
 
+  watch(selectedCar, (newCar) => {
+    if (newCar && newCar.branchId && newCar.branchId !== 'all' && newCar.branchId !== '') {
+      const branchStore = useBranchStore()
+      const targetId = (typeof newCar.branchId === 'string' && !isNaN(newCar.branchId))
+        ? parseInt(newCar.branchId, 10) 
+        : newCar.branchId
+      const b = branchStore.branches.find(br => br.id == targetId)
+      if (b) {
+        pickupBranchId.value = b.id
+        dropoffBranchId.value = b.id
+        if (b.cityId) {
+          pickupCity.value = b.cityId
+          dropoffCity.value = b.cityId
+        }
+      }
+    }
+  }, { immediate: true })
+
   // Wizard Step (1: Choose Car, 2: Extras, 3: Details, 4: Payment)
   const currentStep = ref(1)
 
-  // Protection & Insurance Options (Dynamic CMS Managed)
-  const initialInsuranceOptions = [
-    {
-      id: 'basic',
-      code: 'basic',
-      name: 'تغطية مجانية أساسية من الولاء',
-      pricePerDay: 0,
-      deductibleAmount: 3000,
-      badge: 'مجاناً',
-      desc: 'تغطية ضد الحوادث مع نسبة تحمل استقطاع نظامي 3000 ر.س عند خطأ العميل',
-      features: ['تغطية ضد الحوادث', 'استقطاع نسبة التحمل النظامية (3000 ر.س)'],
-      isActive: true
-    },
-    {
-      id: 'full',
-      code: 'full',
-      name: 'أمان المطارات والتغطية الشاملة',
-      pricePerDay: 35,
-      deductibleAmount: 0,
-      badge: 'الأكثر طلباً',
-      desc: 'تغطية شاملة للمركبة والإعفاء التام من نسبة التحمل 0 ر.س',
-      features: ['تغطية شاملة للمركبة', 'إعفاء تام من نسبة التحمل (0 ر.س)', 'تغطية السائق والركاب'],
-      isActive: true
-    },
-    {
-      id: 'shield',
-      code: 'shield',
-      name: 'درع البسيط التام (شامل + زجاج وإطارات)',
-      pricePerDay: 60,
-      deductibleAmount: 0,
-      badge: 'حماية VIP 100%',
-      desc: 'حماية كاملة 100% تشمل الأضرار الناتجة عن الحصى والزجاج والإطارات وسحب المركبة',
-      features: ['حماية كاملة 100%', 'تغطية الزجاج الأمامي والإطارات', 'خدمة سحب المركبة 24/7', 'سيارة بديلة فورية'],
-      isActive: true
-    }
-  ]
-
-  const insuranceOptions = ref(
-    JSON.parse(localStorage.getItem('admin_insurance_options')) || initialInsuranceOptions
-  )
+  const insuranceOptions = ref([])
 
   const activeInsuranceOptions = computed(() => {
     return insuranceOptions.value.filter(i => i.isActive !== false)
@@ -171,65 +159,44 @@ export const useBookingStore = defineStore('booking', () => {
   }
 
   // Add-ons & Extra Services (Dynamic CMS Managed)
-  const initialAddOnsList = [
-    {
-      id: 'openKm',
-      name: 'كيلومتر مفتوح (كيلومترات لا محدوة)',
-      pricePerDay: 50,
-      oneTimePrice: 0,
-      pricingMode: 'daily',
-      desc: 'قيادة بحرية تامة دون أي تقيّـد أو احتساب رسوم إضافية على المسافات',
-      icon: 'Gauge',
-      selected: false,
-      isActive: true
-    },
-    {
-      id: 'babySeat',
-      name: 'مقعد أطفال آمن معتمد',
-      pricePerDay: 15,
-      oneTimePrice: 0,
-      pricingMode: 'daily',
-      desc: 'مقعد مريح ومطابق لأعلى معايير الأمان والسلامة للأطفال',
-      icon: 'Baby',
-      selected: false,
-      isActive: true
-    },
-    {
-      id: 'extraDriver',
-      name: 'إضافة سائق إضافي معتمد',
-      pricePerDay: 35,
-      oneTimePrice: 0,
-      pricingMode: 'daily',
-      desc: 'اعتماد سائق إضافي لقيادة المركبة بطريقة رسمية ومغطاة بالتأمين',
-      icon: 'UserPlus',
-      selected: false,
-      isActive: true
-    },
-    {
-      id: 'airportDelivery',
-      name: 'خدمة التوصيل والاستلام السريع للموقع / المطار',
-      pricePerDay: 0,
-      oneTimePrice: 40,
-      pricingMode: 'oneTime',
-      desc: 'توصيل المركبة واستلامها من موقعك المفضل فوراً (رسوم ثابتة)',
-      icon: 'Truck',
-      selected: false,
-      isActive: true
-    }
-  ]
-
-  const addOnsList = ref(
-    JSON.parse(localStorage.getItem('admin_addons_list')) || initialAddOnsList
-  )
+  const addOnsList = ref([])
 
   const activeAddOnsList = computed(() => {
     return addOnsList.value.filter(a => a.isActive !== false)
   })
 
-  // Add-ons Admin CRUD
-  function addAddOn(addonData) {
+  const selectedAddOnsList = computed(() => {
+    return addOnsList.value.filter(a => a.selected && a.isActive !== false).map(a => {
+      const isOneTime = a.pricingMode === 'oneTime' || a.type === 'one_time'
+      const unitPrice = isOneTime ? (Number(a.oneTimePrice) || 0) : (Number(a.pricePerDay) || 0)
+      const totalPrice = isOneTime ? unitPrice : (unitPrice * rentalDays.value)
+      return {
+        id: a.id,
+        name: a.name,
+        pricingMode: isOneTime ? 'oneTime' : 'daily',
+        pricePerDay: Number(a.pricePerDay) || 0,
+        oneTimePrice: Number(a.oneTimePrice) || 0,
+        unitPrice,
+        totalPrice,
+        desc: a.desc || ''
+      }
+    })
+  })
+
+  // Add-ons Admin CRUD (Persisted to Backend SQL Server)
+  async function addAddOn(addonData) {
     const newId = 'addon_' + Date.now()
-    addOnsList.value.push({
+    const payload = {
+      id: newId,
+      name: addonData.name,
+      type: addonData.pricingMode === 'oneTime' ? 'one_time' : 'per_day',
+      pricePerDay: Number(addonData.pricePerDay) || 0,
+      oneTimePrice: Number(addonData.oneTimePrice) || 0,
+      desc: addonData.desc || '',
+      isActive: addonData.isActive !== undefined ? addonData.isActive : true
+    }
+
+    const newItem = {
       id: newId,
       name: addonData.name,
       pricePerDay: Number(addonData.pricePerDay) || 0,
@@ -238,11 +205,21 @@ export const useBookingStore = defineStore('booking', () => {
       desc: addonData.desc || '',
       icon: addonData.icon || 'Sparkles',
       selected: false,
-      isActive: addonData.isActive !== undefined ? addonData.isActive : true
-    })
+      isActive: payload.isActive
+    }
+    addOnsList.value.push(newItem)
+
+    try {
+      const res = await apiService.createAddOn(payload)
+      if (res && res.id) {
+        newItem.id = res.id
+      }
+    } catch (err) {
+      console.error('Failed to create add-on in backend:', err)
+    }
   }
 
-  function updateAddOn(id, addonData) {
+  async function updateAddOn(id, addonData) {
     const idx = addOnsList.value.findIndex(a => a.id === id)
     if (idx !== -1) {
       addOnsList.value[idx] = {
@@ -252,15 +229,40 @@ export const useBookingStore = defineStore('booking', () => {
         oneTimePrice: Number(addonData.oneTimePrice) || 0
       }
     }
+
+    const item = addOnsList.value[idx] || addonData
+    const payload = {
+      id: id,
+      name: item.name,
+      type: item.pricingMode === 'oneTime' ? 'one_time' : 'per_day',
+      pricePerDay: Number(item.pricePerDay) || 0,
+      oneTimePrice: Number(item.oneTimePrice) || 0,
+      desc: item.desc || '',
+      isActive: item.isActive !== undefined ? item.isActive : true
+    }
+
+    try {
+      await apiService.updateAddOn(id, payload)
+    } catch (err) {
+      console.error('Failed to update add-on in backend:', err)
+    }
   }
 
-  function deleteAddOn(id) {
+  async function deleteAddOn(id) {
     addOnsList.value = addOnsList.value.filter(a => a.id !== id)
+    try {
+      await apiService.deleteAddOn(id)
+    } catch (err) {
+      console.error('Failed to delete add-on from backend:', err)
+    }
   }
 
-  function toggleAddOnActive(id) {
+  async function toggleAddOnActive(id) {
     const item = addOnsList.value.find(a => a.id === id)
-    if (item) item.isActive = !item.isActive
+    if (item) {
+      item.isActive = !item.isActive
+      await updateAddOn(id, item)
+    }
   }
 
   function toggleAddOnSelection(id) {
@@ -275,7 +277,7 @@ export const useBookingStore = defineStore('booking', () => {
         apiService.getAddOns().catch(() => null)
       ])
 
-      if (policies && Array.isArray(policies) && policies.length > 0) {
+      if (policies && Array.isArray(policies)) {
         insuranceOptions.value = policies.map(p => ({
           id: p.code || ('ins_' + p.id),
           code: p.code,
@@ -289,9 +291,11 @@ export const useBookingStore = defineStore('booking', () => {
             : ['تغطية شاملة للمركبة', 'إعفاء تام من نسبة التحمل (0 ر.س)', 'تغطية السائق والركاب'],
           isActive: p.isActive !== false
         }))
+      } else {
+        insuranceOptions.value = []
       }
 
-      if (addons && Array.isArray(addons) && addons.length > 0) {
+      if (addons && Array.isArray(addons)) {
         addOnsList.value = addons.map(a => ({
           id: a.id,
           name: a.name,
@@ -303,9 +307,13 @@ export const useBookingStore = defineStore('booking', () => {
           selected: false,
           isActive: a.isActive !== false
         }))
+      } else {
+        addOnsList.value = []
       }
     } catch (err) {
       console.error('Error fetching insurance/addons from Backend API:', err)
+      insuranceOptions.value = []
+      addOnsList.value = []
     }
   }
 
@@ -332,17 +340,7 @@ export const useBookingStore = defineStore('booking', () => {
         return
       }
     } catch (err) {
-      console.log('Falling back to local promo validation.')
-    }
-
-    if (code === 'BASEET15') {
-      appliedDiscount.value = 0.15
-      promoSuccessMessage.value = 'تم تطبيق خصم البسيط 15% بنجاح!'
-    } else if (code === 'KEY2026') {
-      appliedDiscount.value = 0.20
-      promoSuccessMessage.value = 'تم تطبيق خصم Key الترويجي 20% بنجاح!'
-    } else if (code.length > 0) {
-      promoErrorMessage.value = 'كود الخصم غير صحيح أو منتهي الصلاحية'
+      promoErrorMessage.value = 'كود الخصم غير صحيح أو حدث خطأ في التواصل مع النظام'
     }
   }
 
@@ -380,21 +378,11 @@ export const useBookingStore = defineStore('booking', () => {
         return
       }
     } catch (err) {
-      console.log('Customer not found in backend, falling back to local simulation.')
+      console.error('Customer lookup error:', err)
     }
 
-    if (q === '1098765432') {
-      customerForm.value.firstName = 'سعد'
-      customerForm.value.lastName = 'العتيبي'
-      customerForm.value.phone = '0501234567'
-      customerForm.value.email = 'saad@albaseetco.com'
-      customerForm.value.licenseNumber = 'LIC-998877'
-      customerForm.value.idNumber = '1098765432'
-      customerFound.value = true
-    } else {
-      customerFound.value = false
-      alert('لم يتم العثور على بيانات مسبقة برقم الهوية هذا. يرجى إكمال النموذج للتسجيل.')
-    }
+    customerFound.value = false
+    alert('لم يتم العثور على بيانات مسبقة برقم الهوية هذا. يرجى إكمال النموذج للتسجيل.')
   }
 
   // Date Validation & Auto Adjustments
@@ -480,20 +468,7 @@ export const useBookingStore = defineStore('booking', () => {
 
   const selectedPaymentMethod = ref('mada') // 'mada', 'card', 'tabby', 'tamara'
 
-  const bookingsHistory = ref([
-    {
-      bookingRef: 'BAS-98214',
-      status: 'مؤكد',
-      carName: 'سوزوكي ديزاير 2025',
-      pickupBranch: 'محطة قطار السليمانية - جدة',
-      pickupDate: '2026-08-10 11:30',
-      dropoffDate: '2026-08-13 11:30',
-      customerName: 'سعد العتيبي',
-      customerPhone: '0501234567',
-      totalAmount: 489.15,
-      createdAt: '2026-08-05'
-    }
-  ])
+  const bookingsHistory = ref([])
 
   const activeConfirmedBooking = ref(null)
 
@@ -561,7 +536,9 @@ export const useBookingStore = defineStore('booking', () => {
         dropoffDatetime: new Date(`${dropoffDate.value}T${dropoffTime.value}:00`).toISOString(),
         insuranceCode: selectedInsurance.value,
         promoCode: promoCode.value || null,
-        paymentMethod: selectedPaymentMethod.value === 'visa' ? 2 : selectedPaymentMethod.value === 'tabby' ? 3 : selectedPaymentMethod.value === 'tamara' ? 4 : 1
+        paymentMethod: selectedPaymentMethod.value === 'visa' ? 2 : selectedPaymentMethod.value === 'tabby' ? 3 : selectedPaymentMethod.value === 'tamara' ? 4 : 1,
+        addOnsJson: JSON.stringify(selectedAddOnsList.value),
+        addOnsTotal: addOnsTotal.value
       }
 
       const apiBooking = await apiService.createBooking(payload)
@@ -570,19 +547,39 @@ export const useBookingStore = defineStore('booking', () => {
         refCode = apiBooking.bookingRef
       }
 
-      // Deduct available stock live
-      if (selectedCar.value.availableCount !== undefined) {
-        selectedCar.value.availableCount = Math.max(0, selectedCar.value.availableCount - 1)
+      // Deduct available stock live across carStore and branch inventory
+      const carStore = useCarStore()
+      if (selectedCar.value) {
+        const foundCar = carStore.cars.find(c => String(c.id) === String(selectedCar.value.id)) || selectedCar.value
+        foundCar.availableCount = Math.max(0, (foundCar.availableCount || 1) - 1)
+        foundCar.availableStock = Math.max(0, (foundCar.availableStock || 1) - 1)
+
+        const pBranchKey = String(pickupBranchId.value)
+        if (foundCar.branchStock && foundCar.branchStock[pBranchKey] !== undefined) {
+          foundCar.branchStock[pBranchKey] = Math.max(0, Number(foundCar.branchStock[pBranchKey]) - 1)
+        }
+
+        if (selectedCar.value.availableCount !== undefined) {
+          selectedCar.value.availableCount = foundCar.availableCount
+        }
+        if (selectedCar.value.availableStock !== undefined) {
+          selectedCar.value.availableStock = foundCar.availableStock
+        }
       }
-      if (selectedCar.value.availableStock !== undefined) {
-        selectedCar.value.availableStock = Math.max(0, selectedCar.value.availableStock - 1)
-      }
+      carStore.fetchCarsFromBackend()
     } catch (err) {
       console.error('API createBooking Error:', err)
       const errDetail = err.response?.data?.message || err.message || 'حدث خطأ في معالجة الحجز بـ API'
       bookingErrorMessage.value = errDetail
       return null
     }
+
+    const branchStore = useBranchStore()
+    const pBranch = branchStore.branches.find(b => b.id === pickupBranchId.value)
+    const dBranch = branchStore.branches.find(b => b.id === dropoffBranchId.value)
+
+    const pickupBranchName = pBranch ? pBranch.name : 'فرع محطة قطار السليمانية'
+    const dropoffBranchName = dBranch ? dBranch.name : pickupBranchName
 
     const newBooking = {
       bookingRef: refCode,
@@ -591,8 +588,8 @@ export const useBookingStore = defineStore('booking', () => {
       carImage: selectedCar.value ? selectedCar.value.image : '',
       carCategory: selectedCar.value ? selectedCar.value.category : 'اقتصادية',
       carOrSimilar: selectedCar.value ? selectedCar.value.orSimilar : 'أو ما شابه ذلك',
-      pickupBranch: serviceType.value === 'delivery' ? `توصيل إلى: ${deliveryAddress.value}` : 'محطة قطار السليمانية - جدة',
-      dropoffBranch: sameDropoffBranch.value ? (serviceType.value === 'delivery' ? `توصيل إلى: ${deliveryAddress.value}` : 'محطة قطار السليمانية - جدة') : 'الفرع المحدد',
+      pickupBranch: serviceType.value === 'delivery' ? `توصيل إلى: ${deliveryAddress.value}` : pickupBranchName,
+      dropoffBranch: sameDropoffBranch.value ? (serviceType.value === 'delivery' ? `توصيل إلى: ${deliveryAddress.value}` : pickupBranchName) : dropoffBranchName,
       pickupDate: `${pickupDate.value} - ${pickupTime.value}`,
       dropoffDate: `${dropoffDate.value} - ${dropoffTime.value}`,
       customerName: `${form.firstName} ${form.lastName}`,
@@ -606,6 +603,15 @@ export const useBookingStore = defineStore('booking', () => {
       insuranceName: insuranceOptions.value.find(i => i.id === selectedInsurance.value)?.name || 'تغطية أساسية',
       insuranceTotal: insuranceTotal.value.toFixed(2),
       addOnsTotal: addOnsTotal.value.toFixed(2),
+      selectedAddOns: selectedAddOnsList.value.map(item => ({
+        id: item.id,
+        name: item.name,
+        pricingMode: item.pricingMode,
+        pricePerDay: item.pricePerDay,
+        oneTimePrice: item.oneTimePrice,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice
+      })),
       discountAmount: discountAmount.value.toFixed(2),
       subtotal: subtotal.value.toFixed(2),
       vatAmount: vatAmount.value.toFixed(2),
@@ -661,6 +667,7 @@ export const useBookingStore = defineStore('booking', () => {
     toggleInsuranceActive,
     addOnsList,
     activeAddOnsList,
+    selectedAddOnsList,
     addAddOn,
     updateAddOn,
     deleteAddOn,

@@ -135,17 +135,38 @@ export const apiService = {
     return await request(`/promocodes/validate/${code}`)
   },
 
-  // Auth API
+  // Auth & Admin Users Management API
   async login(email, password) {
     return await request('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
   },
+  async getAdminUsers() {
+    return await request('/auth/users')
+  },
+  async createAdminUser(userData) {
+    return await request('/auth/users', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    })
+  },
+  async updateAdminUser(id, userData) {
+    return await request(`/auth/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData),
+    })
+  },
+  async deleteAdminUser(id) {
+    return await request(`/auth/users/${id}`, {
+      method: 'DELETE',
+    })
+  },
 
   // Admin Dashboard & Bookings Management API
-  async getAdminStats() {
-    return await request('/bookings/admin/stats')
+  async getAdminStats(branchId = null) {
+    const url = branchId && branchId !== 'all' ? `/bookings/admin/stats?branchId=${branchId}` : '/bookings/admin/stats'
+    return await request(url)
   },
 
   async getAdminBookings(filters = {}) {
@@ -154,6 +175,7 @@ export const apiService = {
     if (filters.startDate) params.append('startDate', filters.startDate)
     if (filters.endDate) params.append('endDate', filters.endDate)
     if (filters.search) params.append('search', filters.search)
+    if (filters.branchId) params.append('branchId', filters.branchId)
     return await request(`/bookings/admin/all?${params.toString()}`)
   },
 
@@ -192,6 +214,23 @@ export const apiService = {
   },
   async getAddOns() {
     return await request('/addons')
+  },
+  async createAddOn(addonData) {
+    return await request('/addons', {
+      method: 'POST',
+      body: JSON.stringify(addonData),
+    })
+  },
+  async updateAddOn(id, addonData) {
+    return await request(`/addons/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(addonData),
+    })
+  },
+  async deleteAddOn(id) {
+    return await request(`/addons/${id}`, {
+      method: 'DELETE',
+    })
   },
 
   // Handover, Dispatch & Maintenance API

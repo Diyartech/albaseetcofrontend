@@ -20,6 +20,7 @@ const route = useRoute()
 
 // Open SearchWidget edit options drawer by default on entering booking page from Fleet
 const showEditSearchModal = ref(true)
+const showInsuranceSection = ref(false)
 
 onMounted(() => {
   if (route.query.edit === 'true' || route.query.fromFleet === 'true' || true) {
@@ -81,7 +82,7 @@ const currentPickupBranchName = computed(() => {
     return bookingStore.deliveryAddress
   }
   const b = branchStore.branches.find(br => br.id === bookingStore.pickupBranchId)
-  return b ? `${b.name} (${b.cityName})` : 'جدة - محطة السليمانية'
+  return b ? b.name : 'فرع محطة السليمانية'
 })
 </script>
 
@@ -218,6 +219,7 @@ const currentPickupBranchName = computed(() => {
                 <span>👥 {{ bookingStore.selectedCar.passengers }} ركاب</span>
                 <span>⚙️ {{ bookingStore.selectedCar.transmission }}</span>
                 <span>🧳 {{ bookingStore.selectedCar.luggage }} حقائب</span>
+                <span>🛣️ {{ bookingStore.selectedCar.dailyKmLimit > 0 ? `${bookingStore.selectedCar.dailyKmLimit} كم/يوم` : 'كيلومتر مفتوح ♾️' }}</span>
               </div>
             </div>
             <button class="btn btn-outline btn-sm change-car-btn" @click="bookingStore.currentStep = 1">
@@ -225,8 +227,8 @@ const currentPickupBranchName = computed(() => {
             </button>
           </div>
 
-          <!-- Protection Coverage Options (خيارات تغطية التأمين) -->
-          <div class="section-box card">
+          <!-- Protection Coverage Options (خيارات تغطية التأمين - مخفي حالياً بناءً على طلب المستخدم) -->
+          <div v-if="showInsuranceSection" class="section-box card">
             <h3 class="section-title">
               <Shield :size="20" class="text-primary" />
               <span>خيارات التغطية التأمينية لمشوارك 🛡️</span>
@@ -327,8 +329,15 @@ const currentPickupBranchName = computed(() => {
             </div>
 
             <div v-if="bookingStore.addOnsTotal > 0" class="sum-row">
-              <span>قيمة الإضافات المختارة:</span>
+              <span>إجمالي قيمة الإضافات:</span>
               <span>+{{ bookingStore.addOnsTotal.toFixed(2) }} ر.س</span>
+            </div>
+
+            <div v-if="bookingStore.selectedAddOnsList && bookingStore.selectedAddOnsList.length > 0" class="addons-itemized-sidebar">
+              <div v-for="item in bookingStore.selectedAddOnsList" :key="item.id" class="addon-item-subrow">
+                <span class="addon-item-name">• {{ item.name }} <small class="text-muted">({{ item.pricingMode === 'oneTime' ? `${item.oneTimePrice} ر.س ثابت` : `${item.pricePerDay} ر.س × ${bookingStore.rentalDays}d` }})</small></span>
+                <span class="addon-item-val">+{{ item.totalPrice.toFixed(2) }} ر.س</span>
+              </div>
             </div>
 
             <div v-if="bookingStore.appliedDiscount > 0" class="sum-row discount-row">
@@ -499,7 +508,20 @@ const currentPickupBranchName = computed(() => {
                   <td>{{ bookingStore.activeConfirmedBooking.insuranceTotal > 0 ? `+${bookingStore.activeConfirmedBooking.insuranceTotal} ر.س` : 'مجاناً 0.00 ر.س' }}</td>
                 </tr>
 
-                <tr v-if="parseFloat(bookingStore.activeConfirmedBooking.addOnsTotal) > 0">
+                <!-- Selected Add-ons Itemized Rows in Invoice -->
+                <template v-if="bookingStore.activeConfirmedBooking.selectedAddOns && bookingStore.activeConfirmedBooking.selectedAddOns.length > 0">
+                  <tr v-for="addon in bookingStore.activeConfirmedBooking.selectedAddOns" :key="addon.id || addon.name" class="row-addon-item">
+                    <td>
+                      <strong>إضافة: {{ addon.name }}</strong>
+                      <span class="sub-line d-block text-muted">
+                        {{ addon.pricingMode === 'oneTime' ? `رسوم مقطوعة/ثابتة: ${addon.oneTimePrice || addon.unitPrice} ر.س` : `رسوم يومية: ${addon.pricePerDay || addon.unitPrice} ر.س / يوم × ${bookingStore.activeConfirmedBooking.rentalDays} أيام` }}
+                      </span>
+                    </td>
+                    <td>{{ addon.pricingMode === 'oneTime' ? 'مرة واحدة' : `${bookingStore.activeConfirmedBooking.rentalDays} أيام` }}</td>
+                    <td>+{{ (addon.totalPrice || (addon.pricingMode === 'oneTime' ? addon.oneTimePrice : (addon.pricePerDay * bookingStore.activeConfirmedBooking.rentalDays))).toFixed(2) }} ر.س</td>
+                  </tr>
+                </template>
+                <tr v-else-if="parseFloat(bookingStore.activeConfirmedBooking.addOnsTotal) > 0">
                   <td><strong>الإضافات والخدمات المختارة</strong></td>
                   <td>مجمّع</td>
                   <td>+{{ bookingStore.activeConfirmedBooking.addOnsTotal }} ر.س</td>
@@ -843,6 +865,11 @@ const currentPickupBranchName = computed(() => {
 .edit-search-btn:hover {
   background: var(--gold);
   color: var(--primary-deep);
+}
+
+.collapsible-search-box {
+  position: relative;
+  z-index: 1050;
 }
 
 .stepper-bar {
@@ -1203,60 +1230,316 @@ const currentPickupBranchName = computed(() => {
   }
   .sidebar-col {
     position: static;
+    width: 100%;
   }
 }
 
 @media (max-width: 768px) {
+  .booking-page {
+    padding-top: 1rem;
+    padding-bottom: 2rem;
+  }
+  
   .search-summary-top-bar {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0.85rem;
-    padding: 1rem;
-  }
-  .summary-info {
-    gap: 0.75rem;
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .stepper-bar {
     padding: 0.85rem 1rem;
-    justify-content: space-around;
+    border-radius: var(--radius-lg);
   }
-  .step-label {
-    font-size: 0.8rem;
+
+  .summary-info {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
   }
+
+  .info-pill {
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0.45rem 0.75rem;
+    border-radius: var(--radius-md);
+    font-size: 0.82rem;
+  }
+
+  .edit-search-btn {
+    width: 100%;
+    justify-content: center;
+    margin-top: 0.25rem;
+    min-height: 42px;
+    font-weight: 700;
+  }
+
+  .stepper-bar {
+    padding: 0.75rem 0.5rem;
+    justify-content: space-between;
+    gap: 0.25rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .step-item {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.3rem;
+    flex: 1;
+    min-width: 0;
+  }
+
   .step-num {
-    width: 34px;
-    height: 34px;
-    font-size: 0.85rem;
+    width: 32px;
+    height: 32px;
+    font-size: 0.8rem;
+    font-weight: 800;
   }
+
+  .step-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
   .step-divider {
     display: none;
   }
+
+  .filter-header-bar {
+    padding: 0.85rem;
+    gap: 0.85rem;
+    flex-direction: column;
+    align-items: stretch;
+    border-radius: var(--radius-lg);
+  }
+
+  .category-pills {
+    width: 100%;
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    gap: 0.4rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .category-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .cat-pill {
+    padding: 0.4rem 0.85rem;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .filter-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    width: 100%;
+  }
+
+  .toggle-avail {
+    font-size: 0.82rem;
+    justify-content: flex-start;
+  }
+
+  .sort-select-wrapper {
+    width: 100%;
+  }
+
+  .filter-select {
+    flex: 1;
+    width: 100%;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .cars-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
   .car-summary-banner {
     flex-direction: column;
     text-align: center;
+    padding: 1.25rem 1rem;
+    border-radius: var(--radius-lg);
+    gap: 1rem;
   }
+
   .banner-car-img {
     width: 100%;
-    max-width: 180px;
+    max-width: 170px;
     height: auto;
+    margin: 0 auto;
   }
+
+  .banner-car-info {
+    width: 100%;
+  }
+
+  .car-title {
+    font-size: 1.25rem;
+    margin-top: 0.25rem;
+  }
+
   .specs-mini {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+    background: var(--bg-card);
+    padding: 0.65rem;
+    border-radius: var(--radius-md);
+    font-size: 0.78rem;
+    margin-top: 0.5rem;
+    text-align: right;
+    border: 1px solid var(--border-light);
+  }
+
+  .change-car-btn {
+    width: 100%;
     justify-content: center;
+    min-height: 42px;
+    font-size: 0.88rem;
+  }
+
+  .section-box {
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    margin-bottom: 1.25rem;
+  }
+
+  .section-title {
+    font-size: 1.05rem;
     flex-wrap: wrap;
+    border-bottom: 1px solid var(--border-light);
+    padding-bottom: 0.6rem;
   }
-  .cars-grid {
-    grid-template-columns: 1fr;
+
+  .addon-item {
+    padding: 0.85rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
   }
+
+  .addon-info {
+    flex: 1 1 70%;
+    min-width: 0;
+  }
+
+  .addon-info h4 {
+    font-size: 0.9rem;
+  }
+
+  .addon-info p {
+    font-size: 0.78rem;
+  }
+
+  .addon-price {
+    width: 100%;
+    text-align: left;
+    font-size: 0.85rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed var(--border-light);
+    margin-top: 0.25rem;
+  }
+
+  .wizard-actions {
+    flex-direction: column-reverse;
+    gap: 0.75rem;
+    width: 100%;
+    margin-top: 1.5rem;
+  }
+
+  .wizard-actions .btn {
+    width: 100%;
+    padding: 0.85rem;
+    font-size: 0.95rem;
+    justify-content: center;
+    min-height: 48px;
+  }
+
+  .sidebar-col {
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    width: 100%;
+  }
+
   .form-grid {
     grid-template-columns: 1fr;
+    gap: 0.85rem;
   }
-  .payment-methods-grid {
-    grid-template-columns: 1fr 1fr;
-  }
+
   .lookup-input-group, .promo-input-group {
     flex-direction: column;
+    width: 100%;
+    gap: 0.5rem;
+  }
+
+  .lookup-input-group .btn, .promo-input-group .btn {
+    width: 100%;
+    min-height: 42px;
+    justify-content: center;
+  }
+
+  .payment-methods-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+  }
+
+  .pay-method-card {
+    padding: 0.65rem 0.5rem;
+    font-size: 0.78rem;
+    text-align: center;
+    border-radius: var(--radius-md);
+    min-height: 60px;
+    justify-content: center;
+  }
+
+  .card-inputs-box {
+    gap: 0.85rem;
+  }
+
+  .pay-now-btn {
+    min-height: 52px;
+    font-size: 1.05rem;
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (max-width: 480px) {
+  .stepper-bar {
+    padding: 0.6rem 0.25rem;
+  }
+
+  .step-num {
+    width: 28px;
+    height: 28px;
+    font-size: 0.75rem;
+  }
+
+  .step-label {
+    font-size: 0.68rem;
+  }
+
+  .specs-mini {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-methods-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.4rem;
+  }
+
+  .pay-method-card {
+    padding: 0.5rem 0.35rem;
+    font-size: 0.72rem;
   }
 }
 
@@ -1518,5 +1801,42 @@ const currentPickupBranchName = computed(() => {
   .receipt-actions {
     flex-direction: column;
   }
+}
+
+/* Sidebar Add-ons Itemized Breakdown */
+.addons-itemized-sidebar {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.85rem;
+  margin-top: -0.25rem;
+  margin-bottom: 0.75rem;
+  border-right: 3px solid var(--gold);
+}
+
+.addon-item-subrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px dashed var(--border-light);
+}
+
+.addon-item-subrow:last-child {
+  border-bottom: none;
+}
+
+.addon-item-name {
+  color: var(--text-dark);
+  font-weight: 600;
+}
+
+.addon-item-val {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.row-addon-item {
+  background: rgba(212, 175, 55, 0.04);
 }
 </style>

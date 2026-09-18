@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBookingStore } from '../stores/bookingStore'
+import { useCarStore } from '../stores/carStore'
 import { apiService } from '../services/api'
 import VueDateTimePicker from '../components/VueDateTimePicker.vue'
 import { 
@@ -56,7 +57,15 @@ async function handleSearchBooking() {
   try {
     // 1. Try Backend API Search Endpoint
     const result = await apiService.searchBooking(searchRef.value.trim(), searchId.value.trim())
-    searchedBooking.value = result
+    if (result) {
+      if (result.selectedAddOns && typeof result.selectedAddOns === 'string') {
+        try { result.selectedAddOns = JSON.parse(result.selectedAddOns) } catch { }
+      }
+      if ((!result.selectedAddOns || !result.selectedAddOns.length) && result.addOnsJson) {
+        try { result.selectedAddOns = typeof result.addOnsJson === 'string' ? JSON.parse(result.addOnsJson) : result.addOnsJson } catch { }
+      }
+      searchedBooking.value = result
+    }
   } catch (err) {
     // 2. Fallback to Local History if offline
     const cleanRef = searchRef.value.trim().toUpperCase()
@@ -162,6 +171,8 @@ async function cancelBooking() {
 
   try {
     await apiService.cancelBooking(searchedBooking.value.bookingRef)
+    const carStore = useCarStore()
+    carStore.fetchCarsFromBackend()
   } catch (err) {
     console.warn('API cancellation fallback:', err)
   }
@@ -381,6 +392,24 @@ function handlePrintInvoice() {
                 <td><strong>خيار التغطية التأمينية:</strong> {{ searchedBooking.insuranceName || 'تغطية أساسية' }}</td>
                 <td>{{ searchedBooking.rentalDays || 1 }} أيام</td>
                 <td>{{ searchedBooking.insuranceTotal || '0.00' }} ر.س</td>
+              </tr>
+              <!-- Selected Add-ons Itemized Rows in Searched Invoice -->
+              <template v-if="searchedBooking.selectedAddOns && searchedBooking.selectedAddOns.length > 0">
+                <tr v-for="addon in searchedBooking.selectedAddOns" :key="addon.id || addon.name" class="row-addon-item">
+                  <td>
+                    <strong>إضافة: {{ addon.name }}</strong>
+                    <span class="sub-line d-block text-muted">
+                      {{ addon.pricingMode === 'oneTime' ? `رسوم مقطوعة/ثابتة: ${addon.oneTimePrice || addon.unitPrice} ر.س` : `رسوم يومية: ${addon.pricePerDay || addon.unitPrice} ر.س / يوم × ${searchedBooking.rentalDays || 1} أيام` }}
+                    </span>
+                  </td>
+                  <td>{{ addon.pricingMode === 'oneTime' ? 'مرة واحدة' : `${searchedBooking.rentalDays || 1} أيام` }}</td>
+                  <td>+{{ (addon.totalPrice || (addon.pricingMode === 'oneTime' ? addon.oneTimePrice : (addon.pricePerDay * (searchedBooking.rentalDays || 1)))).toFixed(2) }} ر.س</td>
+                </tr>
+              </template>
+              <tr v-else-if="parseFloat(searchedBooking.addOnsTotal || 0) > 0">
+                <td><strong>الإضافات والخدمات المختارة</strong></td>
+                <td>مجمّع</td>
+                <td>+{{ searchedBooking.addOnsTotal }} ر.س</td>
               </tr>
               <tr v-if="parseFloat(searchedBooking.discountAmount || 0) > 0" class="row-discount">
                 <td><strong>خصم الكود الترويجي المفعل</strong></td>

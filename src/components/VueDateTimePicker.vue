@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { Calendar, Clock, ChevronRight, ChevronLeft, Check, X } from 'lucide-vue-next'
+import { Calendar, Clock, ChevronRight, ChevronLeft, Check, X, Info } from 'lucide-vue-next'
+import { parseBranchOperatingHours } from '../stores/branchStore'
 
 const props = defineProps({
   modelValueDate: {
@@ -23,6 +24,10 @@ const props = defineProps({
     type: String,
     default: '' // 'HH:mm' if same min date
   },
+  branchHours: {
+    type: [String, Object],
+    default: '24 ساعة / 7 أيام'
+  },
   iconColorClass: {
     type: String,
     default: 'text-primary'
@@ -34,6 +39,21 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValueDate', 'update:modelValueTime', 'change'])
+
+const parsedSchedule = computed(() => {
+  if (!props.branchHours) {
+    return { is24h: true, activeDays: [0, 1, 2, 3, 4, 5, 6], shifts: [{ start: '00:00', end: '24:00' }], displayText: '24 ساعة / 7 أيام' }
+  }
+  if (typeof props.branchHours === 'object') {
+    return {
+      is24h: props.branchHours.is24h !== undefined ? props.branchHours.is24h : true,
+      activeDays: props.branchHours.activeDays || [0, 1, 2, 3, 4, 5, 6],
+      shifts: props.branchHours.shifts || [{ start: '00:00', end: '24:00' }],
+      displayText: props.branchHours.displayText || props.branchHours.hours || '24 ساعة / 7 أيام'
+    }
+  }
+  return parseBranchOperatingHours(props.branchHours)
+})
 
 const isOpen = ref(false)
 const popoverRef = ref(null)
@@ -65,7 +85,6 @@ function updatePosition() {
   let right = window.innerWidth - rect.right
   let left = rect.left
 
-  // If opening below goes off screen bottom, adjust top
   if (top + 460 > window.innerHeight && rect.top > 460) {
     top = Math.max(10, rect.top - 460)
   }
@@ -99,7 +118,7 @@ function openPicker() {
   }
 }
 
-// Predefined 30-min time slots
+// Predefined 30-min time slots filtered by Branch Operating Shifts
 const timeSlots = computed(() => {
   const slots = []
   for (let h = 0; h < 24; h++) {
@@ -115,6 +134,20 @@ const timeSlots = computed(() => {
       if (props.minDate && props.modelValueDate === props.minDate && props.minTime) {
         if (timeStr <= props.minTime) {
           isDisabled = true
+        }
+      }
+
+      if (!isDisabled && parsedSchedule.value && !parsedSchedule.value.is24h) {
+        const shifts = parsedSchedule.value.shifts
+        if (shifts && shifts.length > 0) {
+          const inShift = shifts.some(s => {
+            const start = s.start || '00:00'
+            const end = s.end || '24:00'
+            return timeStr >= start && timeStr <= end
+          })
+          if (!inShift) {
+            isDisabled = true
+          }
         }
       }
 
@@ -155,7 +188,7 @@ function handleClickOutside(event) {
   isOpen.value = false
 }
 
-// Generate Day Cells for the active Calendar Month
+// Generate Day Cells for the active Calendar Month with Branch Active Days Enforcement
 const calendarDays = computed(() => {
   const year = currentYear.value
   const month = currentMonth.value
@@ -176,9 +209,22 @@ const calendarDays = computed(() => {
     const dd = d.toString().padStart(2, '0')
     const dateStr = `${year}-${mm}-${dd}`
 
+    const dateObj = new Date(year, month, d)
+    const dayOfWeek = dateObj.getDay()
+
     const isToday = dateStr === todayStr
     const isSelected = dateStr === props.modelValueDate
-    const isDisabled = effectiveMinDate ? dateStr < effectiveMinDate : false
+    let isDisabled = effectiveMinDate ? dateStr < effectiveMinDate : false
+
+    if (!isDisabled && parsedSchedule.value) {
+      if (parsedSchedule.value.closedDates && parsedSchedule.value.closedDates.includes(dateStr)) {
+        isDisabled = true
+      } else if (!parsedSchedule.value.is24h) {
+        if (!parsedSchedule.value.activeDays.includes(dayOfWeek)) {
+          isDisabled = true
+        }
+      }
+    }
 
     days.push({
       dateStr,
@@ -192,6 +238,45 @@ const calendarDays = computed(() => {
 
   return days
 })
+
+// Auto-correct date and time if selected values fall on closed days or closed shifts
+watch(
+  [() => props.branchHours, () => props.modelValueDate],
+  () => {
+    if (!props.modelValueDate) return
+    const d = new Date(props.modelValueDate + 'T00:00:00')
+    if (isNaN(d.getTime())) return
+    
+    if (parsedSchedule.value && !parsedSchedule.value.is24h) {
+      let currentDay = d
+      let attempts = 0
+      while (!parsedSchedule.value.activeDays.includes(currentDay.getDay()) && attempts < 14) {
+        currentDay.setDate(currentDay.getDate() + 1)
+        attempts++
+      }
+      if (attempts > 0) {
+        const yyyy = currentDay.getFullYear()
+        const mm = (currentDay.getMonth() + 1).toString().padStart(2, '0')
+        const dd = currentDay.getDate().toString().padStart(2, '0')
+        const newValidDateStr = `${yyyy}-${mm}-${dd}`
+        emit('update:modelValueDate', newValidDateStr)
+        emit('change')
+      }
+    }
+
+    nextTick(() => {
+      const currentSlot = timeSlots.value.find(s => s.value === props.modelValueTime)
+      if (currentSlot && currentSlot.isDisabled) {
+        const validSlot = timeSlots.value.find(s => !s.isDisabled)
+        if (validSlot) {
+          emit('update:modelValueTime', validSlot.value)
+          emit('change')
+        }
+      }
+    })
+  },
+  { immediate: true }
+)
 
 function prevMonth() {
   if (currentMonth.value === 0) {
@@ -279,7 +364,13 @@ const formattedDisplay = computed(() => {
           @click.stop
         >
           <div class="popover-header">
-            <h4>تقويم حجز البسيط 📅</h4>
+            <div>
+              <h4>تقويم حجز البسيط 📅</h4>
+              <div v-if="parsedSchedule && parsedSchedule.displayText" class="schedule-banner-text">
+                <Clock :size="12" class="text-gold" />
+                <span>دوام الفرع: <strong>{{ parsedSchedule.displayText }}</strong></span>
+              </div>
+            </div>
             <button class="close-pop-btn" @click="isOpen = false"><X :size="16" /></button>
           </div>
 
@@ -453,6 +544,20 @@ const formattedDisplay = computed(() => {
   font-size: 0.95rem;
   font-weight: 800;
   color: #0F172A !important;
+}
+
+.schedule-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.schedule-banner-text strong {
+  color: var(--primary);
+  font-weight: 700;
 }
 
 .close-pop-btn {

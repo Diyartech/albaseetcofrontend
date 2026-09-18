@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useCarStore } from '../stores/carStore'
 import { useBranchStore } from '../stores/branchStore'
+import { useBookingStore } from '../stores/bookingStore'
 import CarCard from '../components/CarCard.vue'
 import { 
   Car, ArrowUpDown, Search, MapPin, Calendar, Layers, RefreshCw 
@@ -9,6 +10,7 @@ import {
 
 const carStore = useCarStore()
 const branchStore = useBranchStore()
+const bookingStore = useBookingStore()
 
 onMounted(() => {
   carStore.fetchCarsFromBackend()
@@ -21,6 +23,20 @@ const selectedBranch = ref('all')
 const selectedCategory = ref('all')
 const selectedModelYear = ref('all')
 const sortBy = ref('price_asc')
+
+watch(selectedBranch, (newBranch) => {
+  if (newBranch && newBranch !== 'all') {
+    const b = branchStore.branches.find(br => br.id == newBranch)
+    if (b) {
+      bookingStore.pickupBranchId = b.id
+      bookingStore.dropoffBranchId = b.id
+      if (b.cityId) {
+        bookingStore.pickupCity = b.cityId
+        bookingStore.dropoffCity = b.cityId
+      }
+    }
+  }
+})
 
 // Extract unique available model years from the cars array dynamically
 const availableModelYears = computed(() => {

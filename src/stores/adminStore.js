@@ -15,47 +15,12 @@ export const useAdminStore = defineStore('admin', () => {
   )
 
   // Hero Slider Banners CMS
-  const defaultBanners = [
-    {
-      id: 1,
-      badge: 'خصومات خاصة',
-      title: 'وفر حتى 20% عند استئجار منتجات سامسونج والبسيط',
-      subtitle: 'عرض حصري لفترة محدودة على فئة السدان الكبيرة والاقتصادية',
-      promoCode: 'BASEET15',
-      bgGradient: 'linear-gradient(135deg, #071C18 0%, #004D40 100%)',
-      ctaText: 'احجز عرضك الآن',
-      active: true
-    },
-    {
-      id: 2,
-      badge: 'برنامج الولاء',
-      title: 'سواها المفتاح والبسيط! تكسب نقاط مزدوجة مع كل رحلة',
-      subtitle: 'استبدل نقاطك بأيام إيجار مجانية أو ترقية فئة السيارة تلقائياً',
-      promoCode: 'KEY2026',
-      bgGradient: 'linear-gradient(135deg, #1A1805 0%, #7A5B00 100%)',
-      ctaText: 'استكشف برنامج الولاء',
-      active: true
-    },
-    {
-      id: 3,
-      badge: 'العرض الشهري',
-      title: 'تأجير فليكس الشهري بأفضل سعر بالمملكة',
-      subtitle: 'سيارة تحت تصرفك شهر كاملاً شاملة التأمين والتوصيل المباشر',
-      promoCode: 'MONTHLY25',
-      bgGradient: 'linear-gradient(135deg, #1B003A 0%, #004D40 100%)',
-      ctaText: 'اشترك شهرياً',
-      active: true
-    }
-  ]
-
-  const banners = ref(
-    JSON.parse(localStorage.getItem('admin_banners')) || defaultBanners
-  )
+  const banners = ref([])
 
   async function fetchBannersFromBackend() {
     try {
       const apiBanners = await apiService.getBanners(true)
-      if (apiBanners && apiBanners.length > 0) {
+      if (apiBanners && Array.isArray(apiBanners)) {
         banners.value = apiBanners.map(b => ({
           id: b.id,
           badge: b.badgeText,
@@ -66,9 +31,12 @@ export const useAdminStore = defineStore('admin', () => {
           ctaText: b.ctaText || 'احجز الآن',
           active: b.isActive
         }))
+      } else {
+        banners.value = []
       }
     } catch (err) {
-      console.log('Using local banner cache.')
+      console.error('Error fetching banners from Backend API:', err)
+      banners.value = []
     }
   }
 
@@ -86,9 +54,10 @@ export const useAdminStore = defineStore('admin', () => {
     activeBranchesCount: 0
   })
 
-  async function fetchLiveStats() {
+  async function fetchLiveStats(branchId = null) {
     try {
-      const data = await apiService.getAdminStats()
+      const targetBranchId = branchId || (adminUser.value?.role === 'BranchUser' ? adminUser.value?.branchId : null)
+      const data = await apiService.getAdminStats(targetBranchId)
       if (data) {
         stats.value = {
           totalBookings: data.totalBookings || 0,
@@ -104,7 +73,65 @@ export const useAdminStore = defineStore('admin', () => {
         }
       }
     } catch (err) {
-      console.log('Using local stats fallback')
+      console.error('Error fetching live stats from Backend API:', err)
+      stats.value = {
+        totalBookings: 0,
+        activeBookings: 0,
+        completedBookings: 0,
+        cancelledBookings: 0,
+        totalRevenue: '0.00 ر.س',
+        cancellationRate: '0%',
+        avgBookingValue: '0.00 ر.س',
+        activeCarsCount: 0,
+        availableCarsStock: 0,
+        activeBranchesCount: 0
+      }
+    }
+  }
+
+  // Branch Users & Admins Management State
+  const adminUsersList = ref([])
+  const isUsersLoading = ref(false)
+
+  async function fetchAdminUsers() {
+    isUsersLoading.value = true
+    try {
+      const users = await apiService.getAdminUsers()
+      adminUsersList.value = users || []
+    } catch (err) {
+      console.error('Error fetching admin users:', err)
+    } finally {
+      isUsersLoading.value = false
+    }
+  }
+
+  async function addAdminUser(userData) {
+    try {
+      await apiService.createAdminUser(userData)
+      await fetchAdminUsers()
+    } catch (err) {
+      console.error('Error creating admin user:', err)
+      throw err
+    }
+  }
+
+  async function updateAdminUser(id, userData) {
+    try {
+      await apiService.updateAdminUser(id, userData)
+      await fetchAdminUsers()
+    } catch (err) {
+      console.error('Error updating admin user:', err)
+      throw err
+    }
+  }
+
+  async function deleteAdminUser(id) {
+    try {
+      await apiService.deleteAdminUser(id)
+      await fetchAdminUsers()
+    } catch (err) {
+      console.error('Error deleting admin user:', err)
+      throw err
     }
   }
 
@@ -208,7 +235,7 @@ export const useAdminStore = defineStore('admin', () => {
   // Authentication State
   const isLoggedIn = ref(localStorage.getItem('admin_isLoggedIn') === 'true')
   const adminUser = ref(
-    JSON.parse(localStorage.getItem('admin_user')) || { name: 'المدير العام', email: 'admin@albaseet.sa' }
+    JSON.parse(localStorage.getItem('admin_user')) || { name: 'المدير العام', email: 'admin@albaseet.sa', role: 'SuperAdmin', branchId: null }
   )
 
   async function login(email, password) {
@@ -220,7 +247,12 @@ export const useAdminStore = defineStore('admin', () => {
       const res = await apiService.login(email, password)
       if (res && res.success) {
         isLoggedIn.value = true
-        adminUser.value = { name: res.name || 'المدير العام', email: res.email || email, role: res.role || 'SuperAdmin' }
+        adminUser.value = {
+          name: res.name || 'مستخدم النظام',
+          email: res.email || email,
+          role: res.role || 'SuperAdmin',
+          branchId: res.branchId || null
+        }
         localStorage.setItem('admin_isLoggedIn', 'true')
         localStorage.setItem('admin_user', JSON.stringify(adminUser.value))
         if (res.token) {
@@ -231,17 +263,6 @@ export const useAdminStore = defineStore('admin', () => {
         throw new Error(res?.message || 'بيانات الدخول غير صحيحة')
       }
     } catch (err) {
-      // Fallback for demo if API unreachable
-      if (err.message && err.message.includes('HTTP error') === false && !err.message.includes('Failed to fetch')) {
-        throw err
-      }
-      if (email === 'admin@albaseet.sa' && password === 'admin123') {
-        isLoggedIn.value = true
-        adminUser.value = { name: 'المدير العام', email: email, role: 'SuperAdmin' }
-        localStorage.setItem('admin_isLoggedIn', 'true')
-        localStorage.setItem('admin_user', JSON.stringify(adminUser.value))
-        return true
-      }
       throw err
     }
   }
@@ -251,6 +272,7 @@ export const useAdminStore = defineStore('admin', () => {
     adminUser.value = null
     localStorage.removeItem('admin_isLoggedIn')
     localStorage.removeItem('admin_user')
+    localStorage.removeItem('admin_token')
   }
 
   return {
@@ -259,12 +281,18 @@ export const useAdminStore = defineStore('admin', () => {
     supportPhone,
     banners,
     stats,
+    adminUsersList,
+    isUsersLoading,
     isLoggedIn,
     adminUser,
     login,
     logout,
     fetchLiveStats,
     fetchBannersFromBackend,
+    fetchAdminUsers,
+    addAdminUser,
+    updateAdminUser,
+    deleteAdminUser,
     addBanner,
     updateBanner,
     deleteBanner,

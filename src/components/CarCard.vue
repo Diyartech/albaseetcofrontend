@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useBookingStore } from '../stores/bookingStore'
 import { Users, DoorClosed, Gauge, Briefcase, Check, ShieldAlert } from 'lucide-vue-next'
 
+import { useBranchStore } from '../stores/branchStore'
+
 const props = defineProps({
   car: {
     type: Object,
@@ -17,6 +19,7 @@ const props = defineProps({
 
 const emit = defineEmits(['select'])
 const bookingStore = useBookingStore()
+const branchStore = useBranchStore()
 const router = useRouter()
 
 const calculatedTotal = computed(() => {
@@ -48,6 +51,20 @@ const isOutOfStock = computed(() => {
 function handleBookClick() {
   if (isOutOfStock.value) return
   bookingStore.selectedCar = props.car
+  if (props.car.branchId && props.car.branchId !== 'all' && props.car.branchId !== '') {
+    const targetId = (typeof props.car.branchId === 'string' && !isNaN(props.car.branchId))
+      ? parseInt(props.car.branchId, 10) 
+      : props.car.branchId
+    const b = branchStore.branches.find(br => br.id == targetId)
+    if (b) {
+      bookingStore.pickupBranchId = b.id
+      bookingStore.dropoffBranchId = b.id
+      if (b.cityId) {
+        bookingStore.pickupCity = b.cityId
+        bookingStore.dropoffCity = b.cityId
+      }
+    }
+  }
   emit('select', props.car)
   bookingStore.currentStep = 2
   router.push({ path: '/booking', query: { edit: 'true', fromFleet: 'true' } })
@@ -94,6 +111,10 @@ function handleBookClick() {
         <div class="spec-item" title="سعة الأمتعة">
           <Briefcase :size="16" />
           <span>{{ car.luggage }}</span>
+        </div>
+        <div class="spec-item km-spec" :title="car.dailyKmLimit > 0 ? `الكيلومتر المسموح يومياً: ${car.dailyKmLimit} كم/يوم` : 'كيلومترات مفتوحة بدون حد يومي'">
+          <span>🛣️</span>
+          <span class="text-gold-dark font-bold">{{ car.dailyKmLimit && car.dailyKmLimit > 0 ? `${car.dailyKmLimit} كم/يوم` : 'مفتوح ♾️' }}</span>
         </div>
       </div>
 

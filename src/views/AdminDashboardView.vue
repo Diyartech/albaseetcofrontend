@@ -36,6 +36,12 @@ async function handleInlineLogin() {
   try {
     await adminStore.login(inlineEmail.value, inlinePassword.value)
     isInlineSubmitting.value = false
+    if (adminStore.adminUser?.role === 'BranchUser') {
+      activeTab.value = 'bookings'
+    } else {
+      activeTab.value = 'overview'
+      adminStore.fetchAdminUsers()
+    }
     adminStore.fetchLiveStats()
     fetchAdminBookings()
   } catch (err) {
@@ -49,7 +55,7 @@ function handleLogout() {
   router.push('/')
 }
 
-const activeTab = ref('overview') // 'overview', 'bookings', 'banners', 'cars', 'branches', 'settings'
+const activeTab = ref(adminStore.adminUser?.role === 'BranchUser' ? 'bookings' : 'overview') // 'overview', 'bookings', 'banners', 'cars', 'branches', 'users', 'settings'
 
 // Bookings Management State (Live from SQL Server)
 const adminBookingsList = ref([])
@@ -62,11 +68,15 @@ const bookingSearchQuery = ref('')
 async function fetchAdminBookings() {
   isBookingsLoading.value = true
   try {
+    const isBranchUser = adminStore.adminUser?.role === 'BranchUser'
+    const targetBranchId = isBranchUser ? adminStore.adminUser?.branchId : null
+
     const list = await apiService.getAdminBookings({
       status: bookingStatusFilter.value,
       startDate: bookingFilterStartDate.value,
       endDate: bookingFilterEndDate.value,
-      search: bookingSearchQuery.value
+      search: bookingSearchQuery.value,
+      branchId: targetBranchId
     })
     adminBookingsList.value = list || []
   } catch (err) {
@@ -93,22 +103,107 @@ async function handleAdminCancelBooking(refNumber) {
     alert(`تم إلغاء الحجز رقم ${refNumber} وإعادة السيارة للمخزون المتاح بنجاح.`)
     fetchAdminBookings()
     adminStore.fetchLiveStats()
+    carStore.fetchCarsFromBackend()
   } catch (err) {
     alert(err.message || 'حدث خطأ أثناء إلغاء الحجز')
   }
 }
 
+// Branch Users Management State
+const isUserModalOpen = ref(false)
+const editingUserId = ref(null)
+const userForm = ref({
+  name: '',
+  email: '',
+  password: '',
+  role: 'BranchUser',
+  branchId: '',
+  isActive: true
+})
+
+function openAddUserModal() {
+  editingUserId.value = null
+  const defaultBranch = branchStore.branches[0]?.id ? String(branchStore.branches[0].id) : '1'
+  userForm.value = {
+    name: '',
+    email: '',
+    password: '',
+    role: 'BranchUser',
+    branchId: defaultBranch,
+    isActive: true
+  }
+  isUserModalOpen.value = true
+}
+
+function openEditUserModal(u) {
+  editingUserId.value = u.id
+  userForm.value = {
+    name: u.name || '',
+    email: u.email || '',
+    password: '',
+    role: u.role || 'BranchUser',
+    branchId: u.branchId ? String(u.branchId) : '',
+    isActive: u.isActive !== undefined ? u.isActive : true
+  }
+  isUserModalOpen.value = true
+}
+
+async function saveUser() {
+  if (!userForm.value.name || !userForm.value.email) {
+    alert('يرجى كتابة الاسم والبريد الإلكتروني')
+    return
+  }
+  if (!editingUserId.value && !userForm.value.password) {
+    alert('يرجى إدخال كلمة المرور للحساب الجديد')
+    return
+  }
+
+  try {
+    if (editingUserId.value) {
+      await adminStore.updateAdminUser(editingUserId.value, userForm.value)
+      alert('تم تحديث بيانات المستخدم بنجاح')
+    } else {
+      await adminStore.addAdminUser(userForm.value)
+      alert('تم إنشاء حساب المستخدم وتعيينه للفرع بنجاح')
+    }
+    isUserModalOpen.value = false
+  } catch (err) {
+    alert('حدث خطأ أثناء حفظ بيانات المستخدم: ' + (err.message || 'يرجى التأكد من الحقول'))
+  }
+}
+
+async function handleDeleteUser(userObj) {
+  if (!confirm(`هل أنت تأكد من رغبتك في حذف حساب ${userObj.name}؟`)) return
+  try {
+    await adminStore.deleteAdminUser(userObj.id)
+    alert('تم حذف الحساب بنجاح')
+  } catch (err) {
+    alert('حدث خطأ أثناء حذف الحساب: ' + err.message)
+  }
+}
+
 onMounted(() => {
   if (adminStore.isLoggedIn) {
+    if (adminStore.adminUser?.role === 'BranchUser') {
+      activeTab.value = 'bookings'
+    } else {
+      adminStore.fetchAdminUsers()
+    }
     adminStore.fetchLiveStats()
     fetchAdminBookings()
   }
 })
 
 watch(activeTab, (newTab) => {
+  if (adminStore.adminUser?.role === 'BranchUser' && newTab !== 'bookings') {
+    activeTab.value = 'bookings'
+    return
+  }
   if (newTab === 'overview' || newTab === 'bookings') {
     adminStore.fetchLiveStats()
     fetchAdminBookings()
+  } else if (newTab === 'users') {
+    adminStore.fetchAdminUsers()
   }
 })
 
@@ -226,6 +321,8 @@ function openAddCarModal() {
     doors: 4,
     transmission: 'أوتوماتيك',
     luggage: 2,
+    dailyKmLimit: 250,
+    extraKmPrice: 0.50,
     availableCount: Object.values(initialBranchStock).reduce((sum, v) => sum + Number(v), 0),
     branchStock: initialBranchStock,
     image: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=600&auto=format&fit=crop&q=80',
@@ -267,6 +364,8 @@ function openEditCarModal(c) {
     doors: c.doors || 4,
     transmission: c.transmission || 'أوتوماتيك',
     luggage: c.luggage || 2,
+    dailyKmLimit: c.dailyKmLimit !== undefined ? c.dailyKmLimit : 250,
+    extraKmPrice: c.extraKmPrice !== undefined ? c.extraKmPrice : 0.50,
     availableCount: Object.values(branchStockMap).reduce((sum, v) => sum + Number(v), 0),
     branchStock: branchStockMap,
     image: c.image || '',
@@ -377,9 +476,43 @@ async function saveCar() {
   }
 }
 
-// Branch Form State
+// Branch Form & Interactive GUI Schedule Builder State
+import { parseBranchOperatingHours } from '../stores/branchStore'
+
 const isBranchModalOpen = ref(false)
 const editingBranchId = ref(null)
+
+const weekDaysList = [
+  { dayNum: 6, label: 'السبت' },
+  { dayNum: 0, label: 'الأحد' },
+  { dayNum: 1, label: 'الإثنين' },
+  { dayNum: 2, label: 'الثلاثاء' },
+  { dayNum: 3, label: 'الأربعاء' },
+  { dayNum: 4, label: 'الخميس' },
+  { dayNum: 5, label: 'الجمعة' }
+]
+
+const newHolidayTitle = ref('')
+const newHolidayDate = ref('')
+
+const showAddCityInput = ref(false)
+const newCityNameInput = ref('')
+
+function handleAddNewCity() {
+  if (!newCityNameInput.value || !newCityNameInput.value.trim()) {
+    alert('يرجى كتابة اسم المدينة الجديدة')
+    return
+  }
+  const added = branchStore.addCity(newCityNameInput.value)
+  if (added) {
+    branchForm.value.cityId = added.id
+    branchForm.value.cityName = added.name
+    newCityNameInput.value = ''
+    showAddCityInput.value = false
+    alert(`تم إضافة مدينة "${added.name}" بنجاح وتحديدها للفرع`)
+  }
+}
+
 const branchForm = ref({
   name: '',
   cityId: 'jeddah',
@@ -387,14 +520,97 @@ const branchForm = ref({
   address: '',
   phone: '8002440204',
   isAirport: false,
-  hours: 'السبت - الخميس 10:00 صباحاً - 10:00 مساءً | الجمعة 05:00 مساءً - 10:00 مساءً',
+  is24h: false,
+  activeDays: [6, 0, 1, 2, 3, 4],
+  shifts: [
+    { start: '08:00', end: '12:00' },
+    { start: '17:00', end: '24:00' }
+  ],
+  holidays: [],
+  hours: '24 ساعة / 7 أيام',
+  closedDates: '',
   latitude: 21.5432,
   longitude: 39.1728,
   isActive: true
 })
 
+function toggleWorkingDay(dayNum) {
+  if (!branchForm.value.activeDays) branchForm.value.activeDays = [6, 0, 1, 2, 3, 4]
+  const idx = branchForm.value.activeDays.indexOf(dayNum)
+  if (idx !== -1) {
+    branchForm.value.activeDays.splice(idx, 1)
+  } else {
+    branchForm.value.activeDays.push(dayNum)
+  }
+}
+
+function addShift() {
+  if (!branchForm.value.shifts) branchForm.value.shifts = []
+  branchForm.value.shifts.push({ start: '08:00', end: '17:00' })
+}
+
+function removeShift(index) {
+  if (branchForm.value.shifts) {
+    branchForm.value.shifts.splice(index, 1)
+  }
+}
+
+function addHoliday() {
+  if (!newHolidayDate.value) {
+    alert('يرجى اختيار تاريخ الإجازة/العطلة')
+    return
+  }
+  if (!branchForm.value.holidays) branchForm.value.holidays = []
+  branchForm.value.holidays.push({
+    title: newHolidayTitle.value ? newHolidayTitle.value.trim() : 'إجازة رسمية',
+    date: newHolidayDate.value
+  })
+  newHolidayTitle.value = ''
+  newHolidayDate.value = ''
+}
+
+function removeHoliday(index) {
+  if (branchForm.value.holidays) {
+    branchForm.value.holidays.splice(index, 1)
+  }
+}
+
+function generateHoursString() {
+  if (branchForm.value.is24h) {
+    return '24 ساعة / 7 أيام'
+  }
+  
+  let daysStr = 'طوال الأسبوع'
+  const active = branchForm.value.activeDays || []
+  if (active.length === 6 && !active.includes(5)) {
+    daysStr = 'السبت - الخميس'
+  } else if (active.length === 5 && !active.includes(5) && !active.includes(6)) {
+    daysStr = 'الأحد - الخميس'
+  }
+
+  function formatTime12h(tStr) {
+    if (!tStr) return '08:00 ص'
+    const parts = tStr.split(':')
+    let h = parseInt(parts[0], 10)
+    const m = parts[1] || '00'
+    let ampm = 'ص'
+    if (h >= 12) ampm = 'م'
+    if (h > 12) h -= 12
+    if (h === 0) h = 12
+    return `${h.toString().padStart(2, '0')}:${m} ${ampm}`
+  }
+
+  const shiftsStr = (branchForm.value.shifts || []).map(s => {
+    return `${formatTime12h(s.start)} - ${formatTime12h(s.end)}`
+  }).join(' | ')
+
+  return `${daysStr}: ${shiftsStr || '08:00 ص - 11:00 م'}`
+}
+
 function openAddBranchModal() {
   editingBranchId.value = null
+  showAddCityInput.value = false
+  newCityNameInput.value = ''
   branchForm.value = {
     name: '',
     cityId: 'jeddah',
@@ -402,7 +618,12 @@ function openAddBranchModal() {
     address: '',
     phone: '8002440204',
     isAirport: false,
-    hours: 'السبت - الخميس 10:00 صباحاً - 10:00 مساءً | الجمعة 05:00 مساءً - 10:00 مساءً',
+    is24h: true,
+    activeDays: [6, 0, 1, 2, 3, 4, 5],
+    shifts: [{ start: '08:00', end: '23:00' }],
+    holidays: [],
+    hours: '24 ساعة / 7 أيام',
+    closedDates: '',
     latitude: 21.5432,
     longitude: 39.1728,
     isActive: true
@@ -412,6 +633,18 @@ function openAddBranchModal() {
 
 function openEditBranchModal(br) {
   editingBranchId.value = br.id
+  showAddCityInput.value = false
+  newCityNameInput.value = ''
+  const hoursStr = br.hours || br.operatingHours || '24 ساعة / 7 أيام'
+  const parsed = parseBranchOperatingHours(hoursStr, br.closedDates)
+  
+  const holidaysList = []
+  if (parsed.closedDates && parsed.closedDates.length > 0) {
+    parsed.closedDates.forEach(d => {
+      holidaysList.push({ title: 'إجازة/عطلة رسمية', date: d })
+    })
+  }
+
   branchForm.value = {
     name: br.name || '',
     cityId: br.cityId || 'jeddah',
@@ -419,7 +652,12 @@ function openEditBranchModal(br) {
     address: br.address || '',
     phone: br.phone || '8002440204',
     isAirport: br.isAirport || false,
-    hours: br.hours || br.operatingHours || 'السبت - الخميس 10:00 صباحاً - 10:00 مساءً',
+    is24h: parsed.is24h,
+    activeDays: parsed.activeDays || [6, 0, 1, 2, 3, 4],
+    shifts: parsed.shifts && parsed.shifts.length ? parsed.shifts : [{ start: '08:00', end: '23:00' }],
+    holidays: holidaysList,
+    hours: hoursStr,
+    closedDates: br.closedDates || '',
     latitude: br.latitude || 21.5432,
     longitude: br.longitude || 39.1728,
     isActive: br.isActive !== undefined ? br.isActive : true
@@ -432,6 +670,15 @@ function saveBranch() {
   if (cityObj) {
     branchForm.value.cityName = cityObj.name
   }
+
+  // Generate clean string representation from visual builder
+  branchForm.value.hours = generateHoursString()
+  if (branchForm.value.holidays && branchForm.value.holidays.length > 0) {
+    branchForm.value.closedDates = branchForm.value.holidays.map(h => h.date).join(', ')
+  } else {
+    branchForm.value.closedDates = ''
+  }
+
   if (editingBranchId.value) {
     branchStore.updateBranch(editingBranchId.value, branchForm.value)
   } else {
@@ -534,13 +781,23 @@ function openEditAddonModal(item) {
   isAddonModalOpen.value = true
 }
 
-function saveAddon() {
-  if (editingAddonId.value) {
-    bookingStore.updateAddOn(editingAddonId.value, addonForm.value)
-  } else {
-    bookingStore.addAddOn(addonForm.value)
+async function saveAddon() {
+  if (!addonForm.value.name || !addonForm.value.name.trim()) {
+    alert('يرجى إدخال اسم الخدمة/الإضافة')
+    return
   }
-  isAddonModalOpen.value = false
+  try {
+    if (editingAddonId.value) {
+      await bookingStore.updateAddOn(editingAddonId.value, addonForm.value)
+      alert('تم تعديل بيانات الخدمة وحفظ التغييرات في قاعدة البيانات بنجاح! ✨')
+    } else {
+      await bookingStore.addAddOn(addonForm.value)
+      alert('تم إضافة الخدمة الجديدة وحفظها في قاعدة البيانات بنجاح! ✨')
+    }
+    isAddonModalOpen.value = false
+  } catch (err) {
+    alert('حدث خطأ أثناء حفظ الإضافة في قاعدة البيانات: ' + err.message)
+  }
 }
 
 // Lookups CMS Management State (أنواع المحركات، الوقود، الفئات)
@@ -723,6 +980,9 @@ function viewLiveSite() {
         <div class="brand-block">
           <img src="/logo.png" alt="البسيط" class="admin-logo" />
           <span class="admin-badge">لوحة التحكم الرئيسية (CMS)</span>
+          <span v-if="adminStore.isLoggedIn && adminStore.adminUser" class="badge ms-2" :class="adminStore.adminUser.role === 'BranchUser' ? 'bg-primary' : 'bg-gold'">
+            {{ adminStore.adminUser.role === 'BranchUser' ? '👤 ' + (adminStore.adminUser.name || 'موظف') + ' (' + getBranchDisplayName(adminStore.adminUser.branchId) + ')' : '👑 ' + (adminStore.adminUser.name || 'المدير العام') }}
+          </span>
         </div>
 
         <div class="header-actions">
@@ -791,6 +1051,7 @@ function viewLiveSite() {
       <aside class="admin-sidebar card">
         <nav class="sidebar-nav">
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'overview' }"
             @click="activeTab = 'overview'"
@@ -809,6 +1070,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'insurance' }"
             @click="activeTab = 'insurance'"
@@ -818,6 +1080,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'addons' }"
             @click="activeTab = 'addons'"
@@ -827,6 +1090,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'banners' }"
             @click="activeTab = 'banners'"
@@ -836,6 +1100,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'cars' }"
             @click="activeTab = 'cars'"
@@ -845,6 +1110,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'car_lookups' }"
             @click="activeTab = 'car_lookups'"
@@ -854,6 +1120,7 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'branches' }"
             @click="activeTab = 'branches'"
@@ -863,6 +1130,17 @@ function viewLiveSite() {
           </button>
 
           <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
+            class="nav-tab" 
+            :class="{ active: activeTab === 'users' }"
+            @click="activeTab = 'users'; adminStore.fetchAdminUsers();"
+          >
+            <Users :size="18" class="text-gold" />
+            <span>مستخدمي الفروع والأدمن 👥</span>
+          </button>
+
+          <button 
+            v-if="adminStore.adminUser?.role !== 'BranchUser'"
             class="nav-tab" 
             :class="{ active: activeTab === 'settings' }"
             @click="activeTab = 'settings'"
@@ -1786,6 +2064,92 @@ function viewLiveSite() {
           </div>
         </div>
 
+        <!-- ===================================================================
+             TAB: BRANCH USERS MANAGEMENT (مستخدمي الفروع والأدمن)
+             =================================================================== -->
+        <div v-else-if="activeTab === 'users'" class="tab-pane">
+          <div class="pane-header flex-between">
+            <div>
+              <h2 class="heading-md">إدارة مستخدمي الفروع والصلاحيات 👥</h2>
+              <p class="text-muted">إضافة وتعين موظفين ومدراء للفروع للدخول واستعراض/إدارة حجوزات فرعهم فقط</p>
+            </div>
+            <button class="btn btn-gold btn-sm" @click="openAddUserModal">
+              <Plus :size="16" />
+              <span>إضافة مستخدم فرع جديد</span>
+            </button>
+          </div>
+
+          <div class="card p-3 mb-4" style="background: rgba(243, 112, 33, 0.05); border: 1px solid rgba(243, 112, 33, 0.2);">
+            <div class="d-flex align-items-center gap-2 text-sm text-dark">
+              <Shield :size="18" class="text-primary flex-shrink-0" />
+              <span><strong>تنبيه الصلاحيات:</strong> موظفي الفروع (`BranchUser`) يمكنهم الدخول للوحة التحكم لاستعراض وتحديث حالات وتسليم/إرجاع الحجوزات الخاصة بالفرع المعين لهم فقط دون الوصول لباقي تفاصيل النظام والسيارات.</span>
+            </div>
+          </div>
+
+          <div class="table-responsive card">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>المعرف</th>
+                  <th>اسم الموظف/المستخدم</th>
+                  <th>البريد الإلكتروني</th>
+                  <th>نوع الحساب والدور</th>
+                  <th>الفرع المخصص</th>
+                  <th>الحالة</th>
+                  <th>تاريخ الإنشاء</th>
+                  <th>الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="adminStore.isUsersLoading">
+                  <td colspan="8" class="text-center py-4">
+                    <RefreshCw :size="24" class="spin-icon text-gold" />
+                    <span class="ms-2">جاري تحميل مستخدمي الفروع...</span>
+                  </td>
+                </tr>
+                <tr v-else-if="adminStore.adminUsersList.length === 0">
+                  <td colspan="8" class="text-center py-4 text-muted">
+                    لا يوجد مستخدمون مسجلون حالياً. انقر فوق "إضافة مستخدم فرع جديد" لإضافة أول موظف.
+                  </td>
+                </tr>
+                <tr v-for="user in adminStore.adminUsersList" :key="user.id">
+                  <td><strong>#{{ user.id }}</strong></td>
+                  <td>
+                    <div class="font-bold">{{ user.name }}</div>
+                  </td>
+                  <td>{{ user.email }}</td>
+                  <td>
+                    <span class="badge" :class="user.role === 'SuperAdmin' ? 'bg-gold' : 'bg-primary'">
+                      {{ user.role === 'SuperAdmin' ? '👑 أدمن عام (SuperAdmin)' : '👤 موظف فرع (BranchUser)' }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge bg-subtle text-dark">
+                      {{ user.role === 'SuperAdmin' ? '📍 جميع الفروع' : getBranchDisplayName(user.branchId) }}
+                    </span>
+                  </td>
+                  <td>
+                    <span class="badge" :class="user.isActive ? 'badge-success' : 'badge-danger'">
+                      {{ user.isActive ? 'مفعل' : 'معطل' }}
+                    </span>
+                  </td>
+                  <td>{{ user.createdAt ? new Date(user.createdAt).toLocaleDateString('ar-SA') : '-' }}</td>
+                  <td>
+                    <div class="action-btns">
+                      <button class="btn-icon text-primary" @click="openEditUserModal(user)" title="تعديل">
+                        <Edit :size="16" />
+                      </button>
+                      <button v-if="user.role !== 'SuperAdmin'" class="btn-icon text-danger" @click="handleDeleteUser(user)" title="حذف">
+                        <Trash2 :size="16" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </main>
     </div>
 
@@ -1984,6 +2348,24 @@ function viewLiveSite() {
               </div>
             </div>
 
+            <div class="form-grid my-2 p-2 rounded" style="background: rgba(0,77,64,0.03); border: 1px dashed var(--border-light);">
+              <div class="form-group">
+                <label class="form-label font-bold text-primary">الكيلومتر المسموح به يومياً (Daily KM Limit) 🛣️</label>
+                <input type="number" v-model.number="carForm.dailyKmLimit" class="form-control" placeholder="250" />
+                <div class="d-flex gap-1 flex-wrap mt-1">
+                  <button type="button" class="btn btn-sm btn-subtle p-1 text-xs" @click="carForm.dailyKmLimit = 200">200 كم/يوم</button>
+                  <button type="button" class="btn btn-sm btn-subtle p-1 text-xs" @click="carForm.dailyKmLimit = 250">250 كم/يوم</button>
+                  <button type="button" class="btn btn-sm btn-subtle p-1 text-xs" @click="carForm.dailyKmLimit = 300">300 كم/يوم</button>
+                  <button type="button" class="btn btn-sm btn-subtle p-1 text-xs" @click="carForm.dailyKmLimit = 0">مفتوح ♾️ (0)</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label font-bold text-primary">سعر الكيلو متر الزائد (ر.س / كم)</label>
+                <input type="number" step="0.05" v-model.number="carForm.extraKmPrice" class="form-control" placeholder="0.50" />
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label">رابط صورة السيارة (image_url)</label>
               <input type="text" v-model="carForm.image" class="form-control" placeholder="https://..." />
@@ -2025,8 +2407,31 @@ function viewLiveSite() {
               </div>
 
               <div class="form-group">
-                <label class="form-label">المدينة (city_id / city_name) *</label>
-                <select v-model="branchForm.cityId" class="form-control form-select">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <label class="form-label mb-0">المدينة (city_id / city_name) *</label>
+                  <button 
+                    type="button" 
+                    class="btn btn-sm btn-link text-gold p-0 text-xs text-decoration-none" 
+                    @click="showAddCityInput = !showAddCityInput"
+                  >
+                    {{ showAddCityInput ? '← اختيار من القائمة' : '+ إضافة مدينة جديدة 🏙️' }}
+                  </button>
+                </div>
+
+                <div v-if="showAddCityInput" class="d-flex gap-2">
+                  <input 
+                    type="text" 
+                    v-model="newCityNameInput" 
+                    class="form-control" 
+                    placeholder="اكتب اسم المدينة (مثال: العلا، نيوم)" 
+                    @keyup.enter="handleAddNewCity"
+                  />
+                  <button type="button" class="btn btn-gold whitespace-nowrap text-xs px-3" @click="handleAddNewCity">
+                    إضافة المدينة
+                  </button>
+                </div>
+
+                <select v-else v-model="branchForm.cityId" class="form-control form-select">
                   <option v-for="c in branchStore.cities" :key="c.id" :value="c.id">{{ c.name }} ({{ c.id }})</option>
                 </select>
               </div>
@@ -2037,15 +2442,99 @@ function viewLiveSite() {
               <input type="text" v-model="branchForm.address" class="form-control" placeholder="مثال: محطة قطار السليمانية بجدة" />
             </div>
 
-            <div class="form-grid">
-              <div class="form-group">
-                <label class="form-label">رقم هاتف الفرع (phone)</label>
-                <input type="text" v-model="branchForm.phone" class="form-control" placeholder="8002440204" />
+            <div class="form-group">
+              <label class="form-label">رقم هاتف الفرع (phone)</label>
+              <input type="text" v-model="branchForm.phone" class="form-control" placeholder="8002440204" />
+            </div>
+
+            <!-- Visual Operating Hours & Holidays GUI Builder -->
+            <div class="schedule-gui-builder-card card p-3 my-3" style="background: rgba(0,77,64,0.03); border: 1.5px solid var(--border-light);">
+              <h4 class="text-primary font-bold text-sm mb-3 d-flex align-items-center gap-1">
+                <Clock :size="16" class="text-gold" />
+                <span>مُنشئ ومحدد أوقات الدوام والعطل السنوية للفرع 🕒</span>
+              </h4>
+
+              <!-- 24/7 Mode Toggle -->
+              <div class="form-check form-switch mb-3">
+                <label class="checkbox-label font-bold text-dark">
+                  <input type="checkbox" v-model="branchForm.is24h" />
+                  <span>الفرع يعمل 24 ساعة / 7 أيام طوال الأسبوع (مناسب للمطارات) ✈️</span>
+                </label>
               </div>
 
-              <div class="form-group">
-                <label class="form-label">ساعات وأوقات العمل (operating_hours)</label>
-                <input type="text" v-model="branchForm.hours" class="form-control" placeholder="السبت - الخميس 10:00 ص - 10:00 م" />
+              <!-- If not 24/7: Days & Shifts Selector -->
+              <div v-if="!branchForm.is24h" class="working-hours-config-box">
+                <!-- Active Days Selection -->
+                <div class="mb-3">
+                  <label class="field-label text-xs mb-1">حدد أيام العمل للفرع (الأيام الغير محددة تعتبر مغلقة):</label>
+                  <div class="days-pills-selector d-flex gap-1 flex-wrap">
+                    <button 
+                      v-for="day in weekDaysList" 
+                      :key="day.dayNum"
+                      type="button"
+                      class="btn btn-sm day-pill-btn"
+                      :class="branchForm.activeDays?.includes(day.dayNum) ? 'btn-primary' : 'btn-outline-secondary'"
+                      @click="toggleWorkingDay(day.dayNum)"
+                    >
+                      {{ day.label }} {{ branchForm.activeDays?.includes(day.dayNum) ? '✓' : '✗' }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Shifts Builder -->
+                <div class="mb-3">
+                  <div class="flex-between mb-2">
+                    <label class="field-label text-xs">فترات وساعات الدوام للفرع:</label>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-0 text-xs" @click="addShift">
+                      + إضافة فترة عمل أخرى
+                    </button>
+                  </div>
+
+                  <div v-for="(shift, idx) in branchForm.shifts" :key="idx" class="shift-row-card d-flex align-items-center gap-2 mb-2 p-2 bg-white rounded border">
+                    <span class="text-xs font-bold text-muted">الفترة {{ idx + 1 }}:</span>
+                    <div class="d-flex align-items-center gap-1 text-xs">
+                      <span>من:</span>
+                      <input type="time" v-model="shift.start" class="form-control form-control-sm py-0" style="width: 110px;" />
+                    </div>
+                    <div class="d-flex align-items-center gap-1 text-xs">
+                      <span>إلى:</span>
+                      <input type="time" v-model="shift.end" class="form-control form-control-sm py-0" style="width: 110px;" />
+                    </div>
+                    <button 
+                      v-if="branchForm.shifts.length > 1" 
+                      type="button" 
+                      class="btn btn-sm text-danger p-0 ms-auto" 
+                      @click="removeShift(idx)"
+                      title="حذف الفترة"
+                    >
+                      <X :size="16" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Annual Holidays & Special Closure Dates Builder -->
+              <div class="holidays-config-box border-top pt-3 mt-2">
+                <label class="field-label text-xs mb-2 d-block">إدارة العطل السنوية والإجازات الرسمية للفرع (يتم إغلاق التقويم فيها للعملاء):</label>
+                
+                <div class="add-holiday-inline-form d-flex gap-2 mb-2">
+                  <input type="text" v-model="newHolidayTitle" class="form-control form-control-sm" placeholder="اسم المناسبة (مثال: اليوم الوطني)" />
+                  <input type="date" v-model="newHolidayDate" class="form-control form-control-sm" style="max-width: 160px;" />
+                  <button type="button" class="btn btn-sm btn-gold text-xs whitespace-nowrap" @click="addHoliday">
+                    + إضافة العطلة
+                  </button>
+                </div>
+
+                <!-- Holidays List Badges -->
+                <div v-if="branchForm.holidays && branchForm.holidays.length > 0" class="holidays-tags-grid d-flex gap-1 flex-wrap">
+                  <span v-for="(h, idx) in branchForm.holidays" :key="idx" class="badge badge-subtle d-flex align-items-center gap-1 text-xs p-2 border">
+                    <span>🎉 {{ h.title }} ({{ h.date }})</span>
+                    <button type="button" class="btn-close-tag ms-1 text-danger cursor-pointer border-0 bg-transparent" @click="removeHoliday(idx)">
+                      <X :size="12" />
+                    </button>
+                  </span>
+                </div>
+                <p v-else class="text-xs text-muted mb-0">لا توجد عطلات سنوية مضافة حالياً لهذا الفرع.</p>
               </div>
             </div>
 
@@ -2429,6 +2918,64 @@ function viewLiveSite() {
               <span>طباعة تقرير صيانة السيارة</span>
             </button>
             <button class="btn btn-primary btn-sm" @click="isCarHistoryModalOpen = false">إغلاق التقرير</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Admin / Branch User Add/Edit Modal -->
+    <Teleport to="body">
+      <div v-if="isUserModalOpen" class="modal-overlay" @click="isUserModalOpen = false">
+        <div class="modal-card card" @click.stop style="max-width: 520px;">
+          <div class="modal-header">
+            <h3>{{ editingUserId ? 'تعديل بيانات مستخدم الفرع' : 'إضافة مستخدم / موظف فرع جديد' }} 👤</h3>
+            <button class="close-btn" @click="isUserModalOpen = false"><X :size="20" /></button>
+          </div>
+
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="form-label">الاسم الكامل للموظف/المستخدم *</label>
+              <input type="text" v-model="userForm.name" class="form-control" required placeholder="مثال: أحمد العتيبي - فرع جدة" />
+            </div>
+
+            <div class="form-group mt-3">
+              <label class="form-label">البريد الإلكتروني للدخول *</label>
+              <input type="email" v-model="userForm.email" class="form-control" required placeholder="مثال: jeddah_staff@albaseet.sa" />
+            </div>
+
+            <div class="form-group mt-3">
+              <label class="form-label">{{ editingUserId ? 'كلمة المرور جديدة (اتركها فارغة للإبقاء على الحالية)' : 'كلمة المرور *' }}</label>
+              <input type="password" v-model="userForm.password" class="form-control" :required="!editingUserId" placeholder="••••••••" />
+            </div>
+
+            <div class="form-grid mt-3">
+              <div class="form-group">
+                <label class="form-label">دور ونوع الحساب *</label>
+                <select v-model="userForm.role" class="form-control form-select">
+                  <option value="BranchUser">👤 موظف فرع (مُقيّد بفرع واحد)</option>
+                  <option value="SuperAdmin">👑 مدير عام (SuperAdmin - كامل النظام)</option>
+                </select>
+              </div>
+
+              <div v-if="userForm.role === 'BranchUser'" class="form-group">
+                <label class="form-label">الفرع المخصص للحساب 📍 *</label>
+                <select v-model="userForm.branchId" class="form-control form-select">
+                  <option v-for="b in branchStore.branches" :key="b.id" :value="String(b.id)">
+                    📍 {{ b.name }} ({{ b.cityName }})
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <label class="checkbox-label mt-3">
+              <input type="checkbox" v-model="userForm.isActive" />
+              <span>الحساب مفعل ويمكنه تسجيل الدخول (is_active)</span>
+            </label>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-outline" @click="isUserModalOpen = false">إلغاء</button>
+            <button class="btn btn-primary" @click="saveUser">حفظ مستخدم الفرع</button>
           </div>
         </div>
       </div>

@@ -3,155 +3,8 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { apiService } from '../services/api'
 import { useBookingStore } from './bookingStore'
 
-const defaultCarsList = [
-  {
-    id: 1,
-    name: 'تويوتا كامري 2026',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2026,
-    category: 'midsize',
-    categoryId: 'midsize',
-    engineType: '4 سلندر 2.5L',
-    fuelType: 'بنزين 91',
-    branchId: 'all',
-    dailyRate: 180,
-    weeklyDiscount: 0.10,
-    monthlyDiscount: 0.25,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 3,
-    availableCount: 3,
-    image: 'https://images.unsplash.com/photo-1621007947382-bb3c3994e3fb?w=600&auto=format&fit=crop&q=80',
-    badge: 'الأكثر طلباً',
-    features: ['شاشة لمس 9 بوصة', 'كاميرا خلفية', 'مثبت سرعة ذكي', 'بلوتوث USB'],
-    branchStockJson: '{"1": 2, "2": 1}',
-    branchStock: { "1": 2, "2": 1 }
-  },
-  {
-    id: 2,
-    name: 'هيونداي إكسنت 2025',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2025,
-    category: 'economy',
-    categoryId: 'economy',
-    engineType: '4 سلندر 1.6L',
-    fuelType: 'بنزين 91',
-    branchId: 'all',
-    dailyRate: 110,
-    weeklyDiscount: 0.10,
-    monthlyDiscount: 0.25,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 2,
-    availableCount: 4,
-    image: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=600&auto=format&fit=crop&q=80',
-    badge: 'اقتصادية جداً',
-    features: ['مكيف قوي', 'بلوتوث', 'حساسات خلفية', 'توفير وقود'],
-    branchStockJson: '{"1": 2, "2": 2}',
-    branchStock: { "1": 2, "2": 2 }
-  },
-  {
-    id: 3,
-    name: 'نيسان صني 2025',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2025,
-    category: 'economy',
-    categoryId: 'economy',
-    engineType: '4 سلندر 1.6L',
-    fuelType: 'بنزين 91',
-    branchId: 'all',
-    dailyRate: 100,
-    weeklyDiscount: 0.10,
-    monthlyDiscount: 0.25,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 2,
-    availableCount: 5,
-    image: 'https://images.unsplash.com/photo-1590362891991-f776e747a588?w=600&auto=format&fit=crop&q=80',
-    badge: 'سعر مميز',
-    features: ['مدخل USB', 'نظام فرامل ABS', 'وسائد هوائية'],
-    branchStockJson: '{"1": 3, "2": 2}',
-    branchStock: { "1": 3, "2": 2 }
-  },
-  {
-    id: 4,
-    name: 'تويوتا يارس 2026',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2026,
-    category: 'compact',
-    categoryId: 'compact',
-    engineType: '4 سلندر 1.5L',
-    fuelType: 'بنزين 91',
-    branchId: 'all',
-    dailyRate: 125,
-    weeklyDiscount: 0.10,
-    monthlyDiscount: 0.25,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 2,
-    availableCount: 3,
-    image: 'https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=600&auto=format&fit=crop&q=80',
-    badge: 'موديل حديث',
-    features: ['شاشة ذكية', 'كاميرا خلفية', 'أنظمة أمان متطورة'],
-    branchStockJson: '{"1": 2, "2": 1}',
-    branchStock: { "1": 2, "2": 1 }
-  },
-  {
-    id: 5,
-    name: 'هيونداي توسان 2026',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2026,
-    category: 'suv',
-    categoryId: 'suv',
-    engineType: '4 سلندر 2.0L Turbo',
-    fuelType: 'بنزين 95',
-    branchId: 'all',
-    dailyRate: 260,
-    weeklyDiscount: 0.12,
-    monthlyDiscount: 0.28,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 4,
-    availableCount: 2,
-    image: 'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=600&auto=format&fit=crop&q=80',
-    badge: 'عائلية SUV',
-    features: ['دفع رباعي', 'فتحة بانوراما', 'مقاعد جلد', 'شاشة ملاحة'],
-    branchStockJson: '{"1": 1, "2": 1}',
-    branchStock: { "1": 1, "2": 1 }
-  },
-  {
-    id: 6,
-    name: 'مرسيدس E-Class 2026',
-    orSimilar: 'أو ما شابه ذلك',
-    year: 2026,
-    category: 'luxury',
-    categoryId: 'luxury',
-    engineType: '4 سلندر 2.0L Turbo',
-    fuelType: 'بنزين 95',
-    branchId: 'all',
-    dailyRate: 650,
-    weeklyDiscount: 0.15,
-    monthlyDiscount: 0.30,
-    passengers: 5,
-    doors: 4,
-    transmission: 'أوتوماتيك',
-    luggage: 3,
-    availableCount: 1,
-    image: 'https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=600&auto=format&fit=crop&q=80',
-    badge: 'فخامة مطلقة',
-    features: ['نظام صوتی Burmester', 'إضاءة محيطية 64 لون', 'مقاعد مساج'],
-    branchStockJson: '{"1": 1}',
-    branchStock: { "1": 1 }
-  }
-]
-
 export const useCarStore = defineStore('car', () => {
-  const cars = ref([...defaultCarsList])
+  const cars = ref([])
   const engineTypes = ref([])
   const fuelTypes = ref([])
   const categories = ref([
@@ -165,12 +18,15 @@ export const useCarStore = defineStore('car', () => {
     { id: 'premium', name: 'بريميوم' }
   ])
   const isLoading = ref(false)
+  const selectedCategory = ref('all')
+  const sortBy = ref('price_asc')
+  const availableOnly = ref(false)
 
   async function fetchCarsFromBackend() {
     isLoading.value = true
     try {
       const apiCars = await apiService.getCars(selectedCategory.value, sortBy.value)
-      if (apiCars && apiCars.length > 0) {
+      if (apiCars && Array.isArray(apiCars)) {
         cars.value = apiCars.map(c => ({
           id: c.id,
           name: c.name,
@@ -188,6 +44,8 @@ export const useCarStore = defineStore('car', () => {
           doors: c.doors,
           transmission: c.transmission,
           luggage: c.luggageCapacity,
+          dailyKmLimit: c.dailyKmLimit !== undefined ? c.dailyKmLimit : 250,
+          extraKmPrice: c.extraKmPrice !== undefined ? c.extraKmPrice : 0.50,
           availableCount: c.availableStock,
           image: c.imageUrl,
           badge: c.badge,
@@ -202,9 +60,12 @@ export const useCarStore = defineStore('car', () => {
             }
           })()
         }))
+      } else {
+        cars.value = []
       }
     } catch (err) {
-      console.error('Error fetching cars from Backend API, retaining default cars:', err)
+      console.error('Error fetching cars from Backend API:', err)
+      cars.value = []
     } finally {
       isLoading.value = false
     }
@@ -355,10 +216,6 @@ export const useCarStore = defineStore('car', () => {
     }
   }
 
-  const selectedCategory = ref('all')
-  const sortBy = ref('price_asc')
-  const availableOnly = ref(false)
-
   const filteredCars = computed(() => {
     let result = [...cars.value]
 
@@ -429,6 +286,8 @@ export const useCarStore = defineStore('car', () => {
       doors: Number(carData.doors) || 4,
       transmission: carData.transmission || 'أوتوماتيك',
       luggageCapacity: Number(carData.luggage) || 2,
+      dailyKmLimit: carData.dailyKmLimit !== undefined ? Number(carData.dailyKmLimit) : 250,
+      extraKmPrice: carData.extraKmPrice !== undefined ? Number(carData.extraKmPrice) : 0.50,
       availableStock: Number(carData.availableCount) || 1,
       imageUrl: carData.image || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=600&auto=format&fit=crop&q=80',
       badge: carData.badge || 'الأكثر طلباً',
@@ -474,6 +333,8 @@ export const useCarStore = defineStore('car', () => {
       doors: Number(carData.doors) || 4,
       transmission: carData.transmission || 'أوتوماتيك',
       luggageCapacity: Number(carData.luggage) || 2,
+      dailyKmLimit: carData.dailyKmLimit !== undefined ? Number(carData.dailyKmLimit) : 250,
+      extraKmPrice: carData.extraKmPrice !== undefined ? Number(carData.extraKmPrice) : 0.50,
       availableStock: Number(carData.availableCount) || 1,
       imageUrl: carData.image || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=600&auto=format&fit=crop&q=80',
       badge: carData.badge || 'الأكثر طلباً',
